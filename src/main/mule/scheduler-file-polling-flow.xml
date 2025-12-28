@@ -1,0 +1,299 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:os="http://www.mulesoft.org/schema/mule/os"
+      xmlns:batch="http://www.mulesoft.org/schema/mule/batch"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+        http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd
+        http://www.mulesoft.org/schema/mule/batch http://www.mulesoft.org/schema/mule/batch/current/mule-batch.xsd">
+
+    <!-- ============================================================================ -->
+    <!-- Main Scheduler Flow - File Polling Orchestration                             -->
+    <!-- ============================================================================ -->
+    
+    <flow name="scheduler-file-polling-main-flow" maxConcurrency="1">
+        <scheduler doc:name="File Polling Scheduler" disallowConcurrentExecution="true">
+            <scheduling-strategy>
+                <cron expression="${scheduler.cron.expression}" timeZone="${scheduler.cron.timezone}"/>
+            </scheduling-strategy>
+        </scheduler>
+        
+        <!-- Initialize Correlation ID and Job Metadata -->
+        <ee:transform doc:name="Initialize Job Context">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+{
+    jobId: uuid(),
+    startTime: now(),
+    status: "STARTED"
+}]]></ee:set-payload>
+            </ee:message>
+            <ee:variables>
+                <ee:set-variable variableName="correlationId"><![CDATA[%dw 2.0
+output application/java
+---
+uuid()]]></ee:set-variable>
+                <ee:set-variable variableName="jobStartTime"><![CDATA[%dw 2.0
+output application/java
+---
+now()]]></ee:set-variable>
+                <ee:set-variable variableName="processedFiles"><![CDATA[%dw 2.0
+output application/java
+---
+[]]]></ee:set-variable>
+                <ee:set-variable variableName="failedFiles"><![CDATA[%dw 2.0
+output application/java
+---
+[]]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        
+        <logger level="INFO" doc:name="Log Job Start"
+            message='#["[JOB_START] CorrelationId: " ++ vars.correlationId ++ " | Scheduler triggered at: " ++ (vars.jobStartTime as String)]'/>
+        
+        <!-- Check if scheduler is enabled -->
+        <choice doc:name="Check Scheduler Enabled">
+            <when expression='#[p("scheduler.enabled") == "true"]'>
+                
+                <!-- Acquire Distributed Lock -->
+                <try doc:name="Acquire Distributed Lock">
+                    <os:store key="file_polling_lock" 
+                        objectStore="Distributed_Lock_Object_Store" 
+                        failIfPresent="true"
+                        doc:name="Acquire Lock">
+                        <os:value><![CDATA[#[vars.correlationId]]]></os:value>
+                    </os:store>
+                    
+                    <set-variable variableName="lockAcquired" value="#[true]" doc:name="Set Lock Acquired"/>
+                    
+                    <logger level="INFO" doc:name="Log Lock Acquired"
+                        message='#["[LOCK_ACQUIRED] CorrelationId: " ++ vars.correlationId ++ " | Distributed lock acquired successfully"]'/>
+                    
+                    <error-handler>
+                        <on-error-continue type="OS:KEY_ALREADY_EXISTS">
+                            <logger level="WARN" doc:name="Log Lock Not Acquired"
+                                message='#["[LOCK_SKIPPED] CorrelationId: " ++ vars.correlationId ++ " | Another instance is processing. Skipping this execution."]'/>
+                            <set-variable variableName="lockAcquired" value="#[false]" doc:name="Set Lock Not Acquired"/>
+                        </on-error-continue>
+                    </error-handler>
+                </try>
+                
+                <!-- Process only if lock acquired -->
+                <choice doc:name="Check Lock Acquired">
+                    <when expression="#[vars.lockAcquired == true]">
+                        
+                        <try doc:name="File Polling Processing">
+                            <!-- Poll SFTP if enabled -->
+                            <choice doc:name="Check SFTP Enabled">
+                                <when expression='#[p("sftp.enabled") == "true"]'>
+                                    <flow-ref name="sftp-polling-subflow" doc:name="SFTP Polling"/>
+                                </when>
+                                <otherwise>
+                                    <logger level="DEBUG" doc:name="SFTP Disabled" message="SFTP polling is disabled"/>
+                                </otherwise>
+                            </choice>
+                            
+                            <!-- Poll FTP if enabled -->
+                            <choice doc:name="Check FTP Enabled">
+                                <when expression='#[p("ftp.enabled") == "true"]'>
+                                    <flow-ref name="ftp-polling-subflow" doc:name="FTP Polling"/>
+                                </when>
+                                <otherwise>
+                                    <logger level="DEBUG" doc:name="FTP Disabled" message="FTP polling is disabled"/>
+                                </otherwise>
+                            </choice>
+                            
+                            <!-- Poll S3 if enabled -->
+                            <choice doc:name="Check S3 Enabled">
+                                <when expression='#[p("s3.enabled") == "true"]'>
+                                    <flow-ref name="s3-polling-subflow" doc:name="S3 Polling"/>
+                                </when>
+                                <otherwise>
+                                    <logger level="DEBUG" doc:name="S3 Disabled" message="S3 polling is disabled"/>
+                                </otherwise>
+                            </choice>
+                            
+                            <!-- Poll Azure Blob if enabled -->
+                            <choice doc:name="Check Azure Enabled">
+                                <when expression='#[p("azure.enabled") == "true"]'>
+                                    <flow-ref name="azure-blob-polling-subflow" doc:name="Azure Blob Polling"/>
+                                </when>
+                                <otherwise>
+                                    <logger level="DEBUG" doc:name="Azure Disabled" message="Azure Blob polling is disabled"/>
+                                </otherwise>
+                            </choice>
+                            
+                            <error-handler ref="Global_Error_Handler"/>
+                        </try>
+                        
+                        <!-- Release Distributed Lock -->
+                        <os:remove key="file_polling_lock" 
+                            objectStore="Distributed_Lock_Object_Store" 
+                            doc:name="Release Lock"/>
+                        
+                        <logger level="INFO" doc:name="Log Lock Released"
+                            message='#["[LOCK_RELEASED] CorrelationId: " ++ vars.correlationId ++ " | Distributed lock released"]'/>
+                        
+                    </when>
+                    <otherwise>
+                        <logger level="INFO" doc:name="Skip Processing" 
+                            message='#["[SKIP_PROCESSING] CorrelationId: " ++ vars.correlationId ++ " | Skipping due to lock not acquired"]'/>
+                    </otherwise>
+                </choice>
+                
+            </when>
+            <otherwise>
+                <logger level="INFO" doc:name="Scheduler Disabled" 
+                    message='#["[SCHEDULER_DISABLED] CorrelationId: " ++ vars.correlationId ++ " | File polling scheduler is disabled"]'/>
+            </otherwise>
+        </choice>
+        
+        <!-- Log Job Completion -->
+        <ee:transform doc:name="Calculate Job Duration">
+            <ee:variables>
+                <ee:set-variable variableName="jobDuration"><![CDATA[%dw 2.0
+output application/java
+---
+(now() - vars.jobStartTime) as Number {unit: "seconds"}]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        
+        <logger level="INFO" doc:name="Log Job End"
+            message='#["[JOB_END] CorrelationId: " ++ vars.correlationId ++ " | Duration: " ++ (vars.jobDuration as String) ++ "s | ProcessedFiles: " ++ sizeOf(vars.processedFiles) ++ " | FailedFiles: " ++ sizeOf(vars.failedFiles)]'/>
+        
+        <error-handler ref="Global_Error_Handler"/>
+    </flow>
+
+    <!-- ============================================================================ -->
+    <!-- File Processing Orchestration Subflow                                        -->
+    <!-- ============================================================================ -->
+    
+    <sub-flow name="process-file-orchestration-subflow">
+        <logger level="INFO" doc:name="Log File Processing Start"
+            message='#["[FILE_PROCESS_START] CorrelationId: " ++ vars.correlationId ++ " | Source: " ++ vars.fileSource ++ " | FileName: " ++ vars.fileName ++ " | Size: " ++ (vars.fileSize default 0) ++ " bytes"]'/>
+        
+        <!-- Check Idempotency - Skip if already processed -->
+        <idempotent-message-validator idExpression="#[vars.fileChecksum]" doc:name="Idempotency Check">
+            <os:private-object-store
+                entryTtl="${objectstore.processedFiles.entryTtlHours}"
+                entryTtlUnit="HOURS"
+                maxEntries="${objectstore.processedFiles.maxEntries}"
+                persistent="true"
+                expirationInterval="1"
+                expirationIntervalUnit="HOURS"/>
+        </idempotent-message-validator>
+        
+        <!-- Validate File -->
+        <flow-ref name="file-validation-subflow" doc:name="Validate File"/>
+        
+        <!-- Transform File -->
+        <flow-ref name="file-transformation-subflow" doc:name="Transform File"/>
+        
+        <!-- Route File -->
+        <flow-ref name="file-routing-subflow" doc:name="Route File"/>
+        
+        <!-- Archive File on Success -->
+        <flow-ref name="archive-file-subflow" doc:name="Archive File"/>
+        
+        <!-- Update Processed Files List -->
+        <ee:transform doc:name="Update Processed Files">
+            <ee:variables>
+                <ee:set-variable variableName="processedFiles"><![CDATA[%dw 2.0
+output application/java
+---
+vars.processedFiles ++ [{
+    fileName: vars.fileName,
+    source: vars.fileSource,
+    processedAt: now()
+}]]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        
+        <logger level="INFO" doc:name="Log File Processing Complete"
+            message='#["[FILE_PROCESS_COMPLETE] CorrelationId: " ++ vars.correlationId ++ " | Source: " ++ vars.fileSource ++ " | FileName: " ++ vars.fileName]'/>
+    </sub-flow>
+
+    <!-- ============================================================================ -->
+    <!-- Archive File Subflow                                                         -->
+    <!-- ============================================================================ -->
+    
+    <sub-flow name="archive-file-subflow">
+        <logger level="DEBUG" doc:name="Log Archive Start"
+            message='#["[ARCHIVE_START] CorrelationId: " ++ vars.correlationId ++ " | Source: " ++ vars.fileSource ++ " | FileName: " ++ vars.fileName]'/>
+        
+        <choice doc:name="Route to Source-Specific Archive">
+            <when expression='#[vars.fileSource == "SFTP"]'>
+                <flow-ref name="sftp-archive-file-subflow" doc:name="SFTP Archive"/>
+            </when>
+            <when expression='#[vars.fileSource == "FTP"]'>
+                <flow-ref name="ftp-archive-file-subflow" doc:name="FTP Archive"/>
+            </when>
+            <when expression='#[vars.fileSource == "S3"]'>
+                <flow-ref name="s3-archive-file-subflow" doc:name="S3 Archive"/>
+            </when>
+            <when expression='#[vars.fileSource == "AZURE"]'>
+                <flow-ref name="azure-archive-file-subflow" doc:name="Azure Archive"/>
+            </when>
+            <otherwise>
+                <logger level="WARN" doc:name="Unknown Source" 
+                    message='#["[ARCHIVE_SKIP] Unknown file source: " ++ vars.fileSource]'/>
+            </otherwise>
+        </choice>
+        
+        <logger level="INFO" doc:name="Log Archive Complete"
+            message='#["[ARCHIVE_COMPLETE] CorrelationId: " ++ vars.correlationId ++ " | Source: " ++ vars.fileSource ++ " | FileName: " ++ vars.fileName]'/>
+    </sub-flow>
+
+    <!-- ============================================================================ -->
+    <!-- Move to Error Directory Subflow                                              -->
+    <!-- ============================================================================ -->
+    
+    <sub-flow name="move-to-error-directory-subflow">
+        <logger level="ERROR" doc:name="Log Error Move Start"
+            message='#["[ERROR_MOVE_START] CorrelationId: " ++ vars.correlationId ++ " | Source: " ++ vars.fileSource ++ " | FileName: " ++ vars.fileName ++ " | ErrorCategory: " ++ (vars.errorCategory default "UNKNOWN")]'/>
+        
+        <!-- Update Failed Files List -->
+        <ee:transform doc:name="Update Failed Files">
+            <ee:variables>
+                <ee:set-variable variableName="failedFiles"><![CDATA[%dw 2.0
+output application/java
+---
+vars.failedFiles ++ [{
+    fileName: vars.fileName,
+    source: vars.fileSource,
+    errorCategory: vars.errorCategory default "UNKNOWN",
+    failedAt: now()
+}]]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        
+        <choice doc:name="Route to Source-Specific Error Handler">
+            <when expression='#[vars.fileSource == "SFTP"]'>
+                <flow-ref name="sftp-move-to-error-subflow" doc:name="SFTP Error Move"/>
+            </when>
+            <when expression='#[vars.fileSource == "FTP"]'>
+                <flow-ref name="ftp-move-to-error-subflow" doc:name="FTP Error Move"/>
+            </when>
+            <when expression='#[vars.fileSource == "S3"]'>
+                <flow-ref name="s3-move-to-error-subflow" doc:name="S3 Error Move"/>
+            </when>
+            <when expression='#[vars.fileSource == "AZURE"]'>
+                <flow-ref name="azure-move-to-error-subflow" doc:name="Azure Error Move"/>
+            </when>
+            <otherwise>
+                <logger level="WARN" doc:name="Unknown Source" 
+                    message='#["[ERROR_MOVE_SKIP] Unknown file source: " ++ vars.fileSource]'/>
+            </otherwise>
+        </choice>
+        
+        <logger level="INFO" doc:name="Log Error Move Complete"
+            message='#["[ERROR_MOVE_COMPLETE] CorrelationId: " ++ vars.correlationId ++ " | Source: " ++ vars.fileSource ++ " | FileName: " ++ vars.fileName]'/>
+    </sub-flow>
+
+</mule>

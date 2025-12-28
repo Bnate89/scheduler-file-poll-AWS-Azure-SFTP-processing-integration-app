@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration status="WARN">
+
+    <!-- ============================================================================ -->
+    <!-- MUnit Test Log4j2 Configuration                                              -->
+    <!-- ============================================================================ -->
+
+    <Properties>
+        <Property name="LOG_PATTERN">%-5p %d{yyyy-MM-dd HH:mm:ss.SSS} [%t] [correlationId: %X{correlationId}] %c{1}: %m%n</Property>
+    </Properties>
+
+    <Appenders>
+        <Console name="Console" target="SYSTEM_OUT">
+            <PatternLayout pattern="${LOG_PATTERN}"/>
+        </Console>
+    </Appenders>
+
+    <Loggers>
+        <!-- Application Logger -->
+        <AsyncLogger name="org.mule.runtime.core.internal.processor.LoggerMessageProcessor" level="INFO" additivity="false">
+            <AppenderRef ref="Console"/>
+        </AsyncLogger>
+
+        <!-- MUnit Logger -->
+        <AsyncLogger name="com.mulesoft.munit" level="INFO"/>
+        
+        <!-- Connector Loggers - Suppress during tests -->
+        <AsyncLogger name="org.mule.extension.sftp" level="WARN"/>
+        <AsyncLogger name="org.mule.extension.ftp" level="WARN"/>
+        <AsyncLogger name="com.mulesoft.connectors.s3" level="WARN"/>
+        <AsyncLogger name="org.mule.modules.azure" level="WARN"/>
+        <AsyncLogger name="org.mule.extension.objectstore" level="WARN"/>
+        
+        <!-- HTTP Logger -->
+        <AsyncLogger name="org.mule.service.http" level="WARN"/>
+        <AsyncLogger name="org.mule.extension.http" level="WARN"/>
+        
+        <!-- DataWeave Logger -->
+        <AsyncLogger name="org.mule.weave" level="WARN"/>
+
+        <!-- Reduce startup noise -->
+        <AsyncLogger name="com.mulesoft.mule.runtime.plugin" level="WARN"/>
+        <AsyncLogger name="org.mule.maven.client" level="WARN"/>
+        <AsyncLogger name="org.mule.runtime.core.internal.util" level="WARN"/>
+        <AsyncLogger name="org.quartz" level="WARN"/>
+        <AsyncLogger name="org.mule.munit.plugins.coverage.server" level="WARN"/>
+
+        <!-- Suppress noisy loggers -->
+        <AsyncLogger name="org.apache" level="WARN"/>
+        <AsyncLogger name="org.springframework" level="WARN"/>
+        <AsyncLogger name="com.amazonaws" level="WARN"/>
+        <AsyncLogger name="com.azure" level="WARN"/>
+        <AsyncLogger name="io.netty" level="WARN"/>
+
+        <!-- Root Logger -->
+        <AsyncRoot level="INFO">
+            <AppenderRef ref="Console"/>
+        </AsyncRoot>
+    </Loggers>
+
+</Configuration>

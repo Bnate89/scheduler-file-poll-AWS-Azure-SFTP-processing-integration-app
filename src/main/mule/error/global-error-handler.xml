@@ -1,0 +1,207 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <!-- ============================================================================ -->
+    <!-- Global Error Handler - Centralized Error Handling Framework                  -->
+    <!-- ============================================================================ -->
+    <!-- 
+        This file contains reusable error handling subflows that can be referenced
+        from any flow in the application. The main Global_Error_Handler is defined
+        in global.xml and references these subflows for specific error processing.
+    -->
+
+    <!-- ============================================================================ -->
+    <!-- Error Logging Subflow                                                        -->
+    <!-- ============================================================================ -->
+    
+    <sub-flow name="log-error-details-subflow">
+        <ee:transform doc:name="Build Error Log Entry">
+            <ee:variables>
+                <ee:set-variable variableName="errorLogEntry"><![CDATA[%dw 2.0
+output application/java
+---
+{
+    timestamp: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+    correlationId: vars.correlationId default correlationId,
+    errorType: error.errorType.identifier,
+    errorDescription: error.description,
+    errorCategory: vars.errorCategory default "UNKNOWN",
+    fileName: vars.fileName default "N/A",
+    fileSource: vars.fileSource default "N/A",
+    filePath: vars.filePath default "N/A",
+    processingStage: vars.processingStage default "UNKNOWN",
+    stackTrace: error.cause.message default "No stack trace available"
+}]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        
+        <logger level="ERROR" doc:name="Log Structured Error"
+            message='#["[ERROR_LOG] " ++ write(vars.errorLogEntry, "application/json")]'/>
+    </sub-flow>
+
+    <!-- ============================================================================ -->
+    <!-- Connectivity Error Handler Subflow                                           -->
+    <!-- ============================================================================ -->
+    
+    <sub-flow name="handle-connectivity-error-subflow">
+        <set-variable variableName="errorCategory" value="CONNECTIVITY" doc:name="Set Error Category"/>
+        <set-variable variableName="isRetryable" value="#[true]" doc:name="Set Retryable Flag"/>
+        
+        <logger level="ERROR" doc:name="Log Connectivity Error"
+            message='#["[CONNECTIVITY_ERROR] CorrelationId: " ++ (vars.correlationId default correlationId) ++ " | Source: " ++ (vars.fileSource default "UNKNOWN") ++ " | Error: " ++ error.description ++ " | This error is retryable."]'/>
+        
+        <flow-ref name="log-error-details-subflow" doc:name="Log Error Details"/>
+    </sub-flow>
+
+    <!-- ============================================================================ -->
+    <!-- Authentication Error Handler Subflow                                         -->
+    <!-- ============================================================================ -->
+    
+    <sub-flow name="handle-authentication-error-subflow">
+        <set-variable variableName="errorCategory" value="AUTHENTICATION" doc:name="Set Error Category"/>
+        <set-variable variableName="isRetryable" value="#[false]" doc:name="Set Retryable Flag"/>
+        
+        <logger level="ERROR" doc:name="Log Auth Error"
+            message='#["[AUTH_ERROR] CorrelationId: " ++ (vars.correlationId default correlationId) ++ " | Source: " ++ (vars.fileSource default "UNKNOWN") ++ " | Error: " ++ error.description ++ " | Check credentials configuration."]'/>
+        
+        <flow-ref name="log-error-details-subflow" doc:name="Log Error Details"/>
+    </sub-flow>
+
+    <!-- ============================================================================ -->
+    <!-- Validation Error Handler Subflow                                             -->
+    <!-- ============================================================================ -->
+    
+    <sub-flow name="handle-validation-error-subflow">
+        <set-variable variableName="errorCategory" value="VALIDATION" doc:name="Set Error Category"/>
+        <set-variable variableName="isRetryable" value="#[false]" doc:name="Set Retryable Flag"/>
+        
+        <logger level="ERROR" doc:name="Log Validation Error"
+            message='#["[VALIDATION_ERROR] CorrelationId: " ++ (vars.correlationId default correlationId) ++ " | FileName: " ++ (vars.fileName default "UNKNOWN") ++ " | Error: " ++ error.description]'/>
+        
+        <flow-ref name="log-error-details-subflow" doc:name="Log Error Details"/>
+    </sub-flow>
+
+    <!-- ============================================================================ -->
+    <!-- Transformation Error Handler Subflow                                         -->
+    <!-- ============================================================================ -->
+    
+    <sub-flow name="handle-transformation-error-subflow">
+        <set-variable variableName="errorCategory" value="TRANSFORMATION" doc:name="Set Error Category"/>
+        <set-variable variableName="isRetryable" value="#[false]" doc:name="Set Retryable Flag"/>
+        
+        <logger level="ERROR" doc:name="Log Transform Error"
+            message='#["[TRANSFORM_ERROR] CorrelationId: " ++ (vars.correlationId default correlationId) ++ " | FileName: " ++ (vars.fileName default "UNKNOWN") ++ " | Error: " ++ error.description]'/>
+        
+        <flow-ref name="log-error-details-subflow" doc:name="Log Error Details"/>
+    </sub-flow>
+
+    <!-- ============================================================================ -->
+    <!-- Downstream System Error Handler Subflow                                      -->
+    <!-- ============================================================================ -->
+    
+    <sub-flow name="handle-downstream-error-subflow">
+        <set-variable variableName="errorCategory" value="DOWNSTREAM" doc:name="Set Error Category"/>
+        <set-variable variableName="isRetryable" value="#[true]" doc:name="Set Retryable Flag"/>
+        
+        <logger level="ERROR" doc:name="Log Downstream Error"
+            message='#["[DOWNSTREAM_ERROR] CorrelationId: " ++ (vars.correlationId default correlationId) ++ " | FileName: " ++ (vars.fileName default "UNKNOWN") ++ " | Error: " ++ error.description ++ " | This error may be retryable."]'/>
+        
+        <flow-ref name="log-error-details-subflow" doc:name="Log Error Details"/>
+    </sub-flow>
+
+    <!-- ============================================================================ -->
+    <!-- Dead Letter Handler Subflow                                                  -->
+    <!-- ============================================================================ -->
+    
+    <sub-flow name="dead-letter-handler-subflow">
+        <logger level="ERROR" doc:name="Log Dead Letter"
+            message='#["[DEAD_LETTER] CorrelationId: " ++ (vars.correlationId default correlationId) ++ " | FileName: " ++ (vars.fileName default "UNKNOWN") ++ " | File moved to dead letter after exhausting all retry attempts."]'/>
+        
+        <!-- Build dead letter record -->
+        <ee:transform doc:name="Build Dead Letter Record">
+            <ee:variables>
+                <ee:set-variable variableName="deadLetterRecord"><![CDATA[%dw 2.0
+output application/json
+---
+{
+    deadLetterId: uuid(),
+    timestamp: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+    correlationId: vars.correlationId default correlationId,
+    fileName: vars.fileName default "UNKNOWN",
+    fileSource: vars.fileSource default "UNKNOWN",
+    filePath: vars.filePath default "UNKNOWN",
+    fileSize: vars.fileSize default 0,
+    errorCategory: vars.errorCategory default "UNKNOWN",
+    errorType: error.errorType.identifier default "UNKNOWN",
+    errorDescription: error.description default "No description available",
+    retryAttempts: vars.retryAttempts default 0,
+    originalChecksum: vars.fileChecksum default "N/A"
+}]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        
+        <logger level="ERROR" doc:name="Log Dead Letter Record"
+            message='#["[DEAD_LETTER_RECORD] " ++ write(vars.deadLetterRecord, "application/json")]'/>
+        
+        <!-- Note: In production, this would persist to a dead letter queue or database -->
+        <!-- Example: <vm:publish config-ref="VM_Config" queueName="dead-letter-queue" /> -->
+    </sub-flow>
+
+    <!-- ============================================================================ -->
+    <!-- Error Summary Report Subflow                                                 -->
+    <!-- ============================================================================ -->
+    
+    <sub-flow name="generate-error-summary-subflow">
+        <ee:transform doc:name="Build Error Summary">
+            <ee:variables>
+                <ee:set-variable variableName="errorSummary"><![CDATA[%dw 2.0
+output application/json
+---
+{
+    summaryId: uuid(),
+    generatedAt: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+    correlationId: vars.correlationId default correlationId,
+    jobStartTime: vars.jobStartTime as String default "N/A",
+    totalFilesProcessed: sizeOf(vars.processedFiles default []),
+    totalFilesFailed: sizeOf(vars.failedFiles default []),
+    failedFileDetails: (vars.failedFiles default []) map (file) -> {
+        fileName: file.fileName,
+        source: file.source,
+        errorCategory: file.errorCategory,
+        failedAt: file.failedAt as String default "N/A"
+    },
+    errorCategories: (vars.failedFiles default []) groupBy $.errorCategory 
+        pluck ((files, category) -> {
+            category: category,
+            count: sizeOf(files)
+        })
+}]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        
+        <logger level="INFO" doc:name="Log Error Summary"
+            message='#["[ERROR_SUMMARY] " ++ write(vars.errorSummary, "application/json")]'/>
+    </sub-flow>
+
+    <!-- ============================================================================ -->
+    <!-- Graceful Shutdown Handler Subflow                                            -->
+    <!-- ============================================================================ -->
+    
+    <sub-flow name="graceful-shutdown-handler-subflow">
+        <logger level="WARN" doc:name="Log Shutdown Initiated"
+            message='#["[SHUTDOWN_INITIATED] CorrelationId: " ++ (vars.correlationId default correlationId) ++ " | Graceful shutdown initiated. Completing current file processing."]'/>
+        
+        <!-- Generate final error summary before shutdown -->
+        <flow-ref name="generate-error-summary-subflow" doc:name="Generate Error Summary"/>
+        
+        <logger level="INFO" doc:name="Log Shutdown Complete"
+            message='#["[SHUTDOWN_COMPLETE] CorrelationId: " ++ (vars.correlationId default correlationId) ++ " | All pending operations completed. Application ready for shutdown."]'/>
+    </sub-flow>
+
+</mule>

@@ -1,0 +1,246 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+      xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+        http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <munit:config name="file-error-handling-test-suite.xml"/>
+
+    <!-- ============================================================================ -->
+    <!-- Before Test - Setup Error Handling Test Context                              -->
+    <!-- ============================================================================ -->
+    
+    <munit:before-test name="error-handling-test-before-each">
+        <munit:set-event doc:name="Initialize Error Test Event">
+            <munit:payload value="#[{}]" mediaType="application/java"/>
+            <munit:variables>
+                <munit:variable key="correlationId" value="#[uuid()]"/>
+                <munit:variable key="fileName" value="test-file.csv"/>
+                <munit:variable key="fileSource" value="SFTP"/>
+                <munit:variable key="filePath" value="/inbound/test-file.csv"/>
+                <munit:variable key="processedFiles" value="#[[]]"/>
+                <munit:variable key="failedFiles" value="#[[]]"/>
+            </munit:variables>
+        </munit:set-event>
+    </munit:before-test>
+
+    <!-- ============================================================================ -->
+    <!-- Test: Error Logging Subflow                                                  -->
+    <!-- ============================================================================ -->
+    
+    <munit:test name="test-error-logging-subflow" description="Verify error details are logged correctly">
+        <munit:behavior>
+            <munit:set-event doc:name="Set Error Context">
+                <munit:payload value="#[{}]" mediaType="application/java"/>
+                <munit:variables>
+                    <munit:variable key="correlationId" value="#[uuid()]"/>
+                    <munit:variable key="fileName" value="error-file.csv"/>
+                    <munit:variable key="fileSource" value="S3"/>
+                    <munit:variable key="filePath" value="inbound/error-file.csv"/>
+                    <munit:variable key="errorCategory" value="VALIDATION"/>
+                    <munit:variable key="processingStage" value="VALIDATION"/>
+                </munit:variables>
+            </munit:set-event>
+            
+            <!-- Simulate an error condition -->
+            <raise-error type="APP:VALIDATION_ERROR" description="Test validation error"/>
+        </munit:behavior>
+        
+        <munit:execution>
+            <try>
+                <raise-error type="APP:VALIDATION_ERROR" description="Test validation error"/>
+                <error-handler>
+                    <on-error-continue type="ANY">
+                        <flow-ref name="log-error-details-subflow"/>
+                    </on-error-continue>
+                </error-handler>
+            </try>
+        </munit:execution>
+        
+        <munit:validation>
+            <munit-tools:assert-that expression="#[vars.errorLogEntry]" is="#[MunitTools::notNullValue()]" message="Error log entry should be created"/>
+            <munit-tools:assert-that expression="#[vars.errorLogEntry.correlationId]" is="#[MunitTools::notNullValue()]" message="Correlation ID should be present"/>
+        </munit:validation>
+    </munit:test>
+
+    <!-- ============================================================================ -->
+    <!-- Test: Move to Error Directory Subflow                                        -->
+    <!-- ============================================================================ -->
+    
+    <munit:test name="test-move-to-error-directory" description="Verify failed files are moved to error directory">
+        <munit:behavior>
+            <munit:set-event doc:name="Set Error Move Context">
+                <munit:payload value="#[{}]" mediaType="application/java"/>
+                <munit:variables>
+                    <munit:variable key="correlationId" value="#[uuid()]"/>
+                    <munit:variable key="fileName" value="failed-file.csv"/>
+                    <munit:variable key="fileSource" value="SFTP"/>
+                    <munit:variable key="filePath" value="/inbound/failed-file.csv"/>
+                    <munit:variable key="errorCategory" value="TRANSFORMATION"/>
+                    <munit:variable key="failedFiles" value="#[[]]"/>
+                </munit:variables>
+            </munit:set-event>
+            
+            <!-- Mock SFTP move operation -->
+            <munit-tools:mock-when processor="sftp:move">
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        
+        <munit:execution>
+            <flow-ref name="move-to-error-directory-subflow"/>
+        </munit:execution>
+        
+        <munit:validation>
+            <munit-tools:assert-that expression="#[sizeOf(vars.failedFiles)]" is="#[MunitTools::equalTo(1)]" message="Failed files list should have 1 entry"/>
+            <munit-tools:assert-that expression="#[vars.failedFiles[0].fileName]" is="#[MunitTools::equalTo('failed-file.csv')]" message="Failed file name should match"/>
+        </munit:validation>
+    </munit:test>
+
+    <!-- ============================================================================ -->
+    <!-- Test: Dead Letter Handler                                                    -->
+    <!-- ============================================================================ -->
+    
+    <munit:test name="test-dead-letter-handler" description="Verify dead letter handling creates proper record">
+        <munit:behavior>
+            <munit:set-event doc:name="Set Dead Letter Context">
+                <munit:payload value="#[{}]" mediaType="application/java"/>
+                <munit:variables>
+                    <munit:variable key="correlationId" value="#[uuid()]"/>
+                    <munit:variable key="fileName" value="dead-letter-file.csv"/>
+                    <munit:variable key="fileSource" value="FTP"/>
+                    <munit:variable key="filePath" value="/inbound/dead-letter-file.csv"/>
+                    <munit:variable key="fileSize" value="#[1024]"/>
+                    <munit:variable key="fileChecksum" value="abc123"/>
+                    <munit:variable key="errorCategory" value="DOWNSTREAM"/>
+                    <munit:variable key="retryAttempts" value="#[3]"/>
+                </munit:variables>
+            </munit:set-event>
+            
+            <!-- Simulate an error for dead letter -->
+            <raise-error type="APP:DOWNSTREAM_ERROR" description="Downstream system unavailable"/>
+        </munit:behavior>
+        
+        <munit:execution>
+            <try>
+                <raise-error type="APP:DOWNSTREAM_ERROR" description="Downstream system unavailable"/>
+                <error-handler>
+                    <on-error-continue type="ANY">
+                        <flow-ref name="dead-letter-handler-subflow"/>
+                    </on-error-continue>
+                </error-handler>
+            </try>
+        </munit:execution>
+        
+        <munit:validation>
+            <munit-tools:assert-that expression="#[vars.deadLetterRecord]" is="#[MunitTools::notNullValue()]" message="Dead letter record should be created"/>
+            <munit-tools:assert-that expression="#[vars.deadLetterRecord.fileName]" is="#[MunitTools::equalTo('dead-letter-file.csv')]" message="Dead letter file name should match"/>
+            <munit-tools:assert-that expression="#[vars.deadLetterRecord.retryAttempts]" is="#[MunitTools::equalTo(3)]" message="Retry attempts should be 3"/>
+        </munit:validation>
+    </munit:test>
+
+    <!-- ============================================================================ -->
+    <!-- Test: Error Summary Generation                                               -->
+    <!-- ============================================================================ -->
+    
+    <munit:test name="test-error-summary-generation" description="Verify error summary is generated correctly">
+        <munit:behavior>
+            <munit:set-event doc:name="Set Summary Context">
+                <munit:payload value="#[{}]" mediaType="application/java"/>
+                <munit:variables>
+                    <munit:variable key="correlationId" value="#[uuid()]"/>
+                    <munit:variable key="jobStartTime" value="#[now()]"/>
+                    <munit:variable key="processedFiles" value="#[[
+                        {fileName: 'success1.csv', source: 'SFTP', processedAt: now()},
+                        {fileName: 'success2.json', source: 'S3', processedAt: now()}
+                    ]]"/>
+                    <munit:variable key="failedFiles" value="#[[
+                        {fileName: 'failed1.csv', source: 'FTP', errorCategory: 'VALIDATION', failedAt: now()},
+                        {fileName: 'failed2.xml', source: 'AZURE', errorCategory: 'TRANSFORMATION', failedAt: now()}
+                    ]]"/>
+                </munit:variables>
+            </munit:set-event>
+        </munit:behavior>
+        
+        <munit:execution>
+            <flow-ref name="generate-error-summary-subflow"/>
+        </munit:execution>
+        
+        <munit:validation>
+            <munit-tools:assert-that expression="#[vars.errorSummary]" is="#[MunitTools::notNullValue()]" message="Error summary should be created"/>
+            <munit-tools:assert-that expression="#[vars.errorSummary.totalFilesProcessed]" is="#[MunitTools::equalTo(2)]" message="Total processed files should be 2"/>
+            <munit-tools:assert-that expression="#[vars.errorSummary.totalFilesFailed]" is="#[MunitTools::equalTo(2)]" message="Total failed files should be 2"/>
+        </munit:validation>
+    </munit:test>
+
+    <!-- ============================================================================ -->
+    <!-- Test: Connectivity Error Handler                                             -->
+    <!-- ============================================================================ -->
+    
+    <munit:test name="test-connectivity-error-handler" description="Verify connectivity errors are handled correctly">
+        <munit:behavior>
+            <munit:set-event doc:name="Set Connectivity Error Context">
+                <munit:payload value="#[{}]" mediaType="application/java"/>
+                <munit:variables>
+                    <munit:variable key="correlationId" value="#[uuid()]"/>
+                    <munit:variable key="fileSource" value="SFTP"/>
+                </munit:variables>
+            </munit:set-event>
+        </munit:behavior>
+        
+        <munit:execution>
+            <try>
+                <raise-error type="SFTP:CONNECTIVITY" description="Connection refused"/>
+                <error-handler>
+                    <on-error-continue type="ANY">
+                        <flow-ref name="handle-connectivity-error-subflow"/>
+                    </on-error-continue>
+                </error-handler>
+            </try>
+        </munit:execution>
+        
+        <munit:validation>
+            <munit-tools:assert-that expression="#[vars.errorCategory]" is="#[MunitTools::equalTo('CONNECTIVITY')]" message="Error category should be CONNECTIVITY"/>
+            <munit-tools:assert-that expression="#[vars.isRetryable]" is="#[MunitTools::equalTo(true)]" message="Connectivity errors should be retryable"/>
+        </munit:validation>
+    </munit:test>
+
+    <!-- ============================================================================ -->
+    <!-- Test: Validation Error Handler                                               -->
+    <!-- ============================================================================ -->
+    
+    <munit:test name="test-validation-error-handler" description="Verify validation errors are handled correctly">
+        <munit:behavior>
+            <munit:set-event doc:name="Set Validation Error Context">
+                <munit:payload value="#[{}]" mediaType="application/java"/>
+                <munit:variables>
+                    <munit:variable key="correlationId" value="#[uuid()]"/>
+                    <munit:variable key="fileName" value="invalid.csv"/>
+                </munit:variables>
+            </munit:set-event>
+        </munit:behavior>
+        
+        <munit:execution>
+            <try>
+                <raise-error type="APP:VALIDATION_ERROR" description="Invalid file format"/>
+                <error-handler>
+                    <on-error-continue type="ANY">
+                        <flow-ref name="handle-validation-error-subflow"/>
+                    </on-error-continue>
+                </error-handler>
+            </try>
+        </munit:execution>
+        
+        <munit:validation>
+            <munit-tools:assert-that expression="#[vars.errorCategory]" is="#[MunitTools::equalTo('VALIDATION')]" message="Error category should be VALIDATION"/>
+            <munit-tools:assert-that expression="#[vars.isRetryable]" is="#[MunitTools::equalTo(false)]" message="Validation errors should not be retryable"/>
+        </munit:validation>
+    </munit:test>
+
+</mule>

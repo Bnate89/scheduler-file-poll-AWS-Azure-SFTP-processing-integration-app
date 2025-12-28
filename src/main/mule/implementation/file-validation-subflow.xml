@@ -1,0 +1,239 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <!-- ============================================================================ -->
+    <!-- File Validation Subflow                                                      -->
+    <!-- ============================================================================ -->
+    
+    <sub-flow name="file-validation-subflow">
+        <logger level="DEBUG" doc:name="Log Validation Start"
+            message='#["[VALIDATION_START] CorrelationId: " ++ vars.correlationId ++ " | FileName: " ++ vars.fileName ++ " | Extension: " ++ vars.fileExtension]'/>
+        
+        <!-- Validate File Size -->
+        <choice doc:name="Validate File Size">
+            <when expression="#[(vars.fileSize default 0) &lt; (p('file.validation.minSizeBytes') as Number)]">
+                <logger level="ERROR" doc:name="Log Size Too Small"
+                    message='#["[VALIDATION_FAILED] CorrelationId: " ++ vars.correlationId ++ " | FileName: " ++ vars.fileName ++ " | Reason: File size too small (" ++ (vars.fileSize as String) ++ " bytes)"]'/>
+                <raise-error doc:name="Raise Validation Error" type="APP:VALIDATION_ERROR" description="File size is below minimum threshold"/>
+            </when>
+            <when expression="#[(vars.fileSize default 0) &gt; (p('file.validation.maxSizeBytes') as Number)]">
+                <logger level="ERROR" doc:name="Log Size Too Large"
+                    message='#["[VALIDATION_FAILED] CorrelationId: " ++ vars.correlationId ++ " | FileName: " ++ vars.fileName ++ " | Reason: File size too large (" ++ (vars.fileSize as String) ++ " bytes)"]'/>
+                <raise-error doc:name="Raise Validation Error" type="APP:VALIDATION_ERROR" description="File size exceeds maximum threshold"/>
+            </when>
+            <otherwise>
+                <logger level="DEBUG" doc:name="Log Size Valid" message="File size validation passed"/>
+            </otherwise>
+        </choice>
+        
+        <!-- Validate File Format and Parse Content -->
+        <choice doc:name="Validate File Format">
+            <when expression='#[vars.fileExtension == "csv"]'>
+                <flow-ref name="validate-csv-file-subflow" doc:name="Validate CSV"/>
+            </when>
+            <when expression='#[vars.fileExtension == "json"]'>
+                <flow-ref name="validate-json-file-subflow" doc:name="Validate JSON"/>
+            </when>
+            <when expression='#[vars.fileExtension == "xml"]'>
+                <flow-ref name="validate-xml-file-subflow" doc:name="Validate XML"/>
+            </when>
+            <when expression='#[vars.fileExtension == "txt"]'>
+                <flow-ref name="validate-txt-file-subflow" doc:name="Validate TXT"/>
+            </when>
+            <otherwise>
+                <logger level="WARN" doc:name="Log Unsupported Format"
+                    message='#["[VALIDATION_WARN] CorrelationId: " ++ vars.correlationId ++ " | FileName: " ++ vars.fileName ++ " | Unsupported format: " ++ vars.fileExtension]'/>
+                <raise-error doc:name="Raise Validation Error" type="APP:VALIDATION_ERROR" description="Unsupported file format"/>
+            </otherwise>
+        </choice>
+        
+        <logger level="INFO" doc:name="Log Validation Complete"
+            message='#["[VALIDATION_COMPLETE] CorrelationId: " ++ vars.correlationId ++ " | FileName: " ++ vars.fileName ++ " | RecordCount: " ++ (vars.recordCount default 0)]'/>
+    </sub-flow>
+
+    <!-- ============================================================================ -->
+    <!-- CSV Validation Subflow                                                       -->
+    <!-- ============================================================================ -->
+    
+    <sub-flow name="validate-csv-file-subflow">
+        <logger level="DEBUG" doc:name="Log CSV Validation" message="Validating CSV file structure"/>
+        
+        <try doc:name="Parse CSV">
+            <ee:transform doc:name="Parse and Validate CSV">
+                <ee:message>
+                    <ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+read(vars.fileContent, "application/csv", {header: true})]]></ee:set-payload>
+                </ee:message>
+                <ee:variables>
+                    <ee:set-variable variableName="recordCount"><![CDATA[%dw 2.0
+output application/java
+---
+sizeOf(read(vars.fileContent, "application/csv", {header: true}))]]></ee:set-variable>
+                    <ee:set-variable variableName="parsedData"><![CDATA[%dw 2.0
+output application/java
+---
+read(vars.fileContent, "application/csv", {header: true})]]></ee:set-variable>
+                </ee:variables>
+            </ee:transform>
+            
+            <!-- Validate record count -->
+            <choice doc:name="Check Record Count">
+                <when expression="#[(vars.recordCount default 0) == 0]">
+                    <raise-error doc:name="Raise Empty File Error" type="APP:VALIDATION_ERROR" description="CSV file contains no data records"/>
+                </when>
+                <otherwise>
+                    <logger level="DEBUG" doc:name="Log CSV Valid" 
+                        message='#["CSV validation passed with " ++ (vars.recordCount as String) ++ " records"]'/>
+                </otherwise>
+            </choice>
+            
+            <error-handler>
+                <on-error-propagate type="ANY">
+                    <logger level="ERROR" doc:name="Log CSV Parse Error"
+                        message='#["[CSV_PARSE_ERROR] CorrelationId: " ++ vars.correlationId ++ " | FileName: " ++ vars.fileName ++ " | Error: " ++ error.description]'/>
+                    <raise-error doc:name="Raise Validation Error" type="APP:VALIDATION_ERROR" description="#['Invalid CSV format: ' ++ error.description]"/>
+                </on-error-propagate>
+            </error-handler>
+        </try>
+    </sub-flow>
+
+    <!-- ============================================================================ -->
+    <!-- JSON Validation Subflow                                                      -->
+    <!-- ============================================================================ -->
+    
+    <sub-flow name="validate-json-file-subflow">
+        <logger level="DEBUG" doc:name="Log JSON Validation" message="Validating JSON file structure"/>
+        
+        <try doc:name="Parse JSON">
+            <ee:transform doc:name="Parse and Validate JSON">
+                <ee:message>
+                    <ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+read(vars.fileContent, "application/json")]]></ee:set-payload>
+                </ee:message>
+                <ee:variables>
+                    <ee:set-variable variableName="parsedData"><![CDATA[%dw 2.0
+output application/java
+var jsonData = read(vars.fileContent, "application/json")
+---
+jsonData]]></ee:set-variable>
+                    <ee:set-variable variableName="recordCount"><![CDATA[%dw 2.0
+output application/java
+var jsonData = read(vars.fileContent, "application/json")
+---
+if (jsonData is Array) sizeOf(jsonData) else 1]]></ee:set-variable>
+                </ee:variables>
+            </ee:transform>
+            
+            <logger level="DEBUG" doc:name="Log JSON Valid" 
+                message='#["JSON validation passed with " ++ (vars.recordCount as String) ++ " records"]'/>
+            
+            <error-handler>
+                <on-error-propagate type="ANY">
+                    <logger level="ERROR" doc:name="Log JSON Parse Error"
+                        message='#["[JSON_PARSE_ERROR] CorrelationId: " ++ vars.correlationId ++ " | FileName: " ++ vars.fileName ++ " | Error: " ++ error.description]'/>
+                    <raise-error doc:name="Raise Validation Error" type="APP:VALIDATION_ERROR" description="#['Invalid JSON format: ' ++ error.description]"/>
+                </on-error-propagate>
+            </error-handler>
+        </try>
+    </sub-flow>
+
+    <!-- ============================================================================ -->
+    <!-- XML Validation Subflow                                                       -->
+    <!-- ============================================================================ -->
+    
+    <sub-flow name="validate-xml-file-subflow">
+        <logger level="DEBUG" doc:name="Log XML Validation" message="Validating XML file structure"/>
+        
+        <try doc:name="Parse XML">
+            <ee:transform doc:name="Parse and Validate XML">
+                <ee:message>
+                    <ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+read(vars.fileContent, "application/xml")]]></ee:set-payload>
+                </ee:message>
+                <ee:variables>
+                    <ee:set-variable variableName="parsedData"><![CDATA[%dw 2.0
+output application/java
+---
+read(vars.fileContent, "application/xml")]]></ee:set-variable>
+                    <ee:set-variable variableName="recordCount"><![CDATA[%dw 2.0
+output application/java
+var xmlData = read(vars.fileContent, "application/xml")
+---
+1]]></ee:set-variable>
+                </ee:variables>
+            </ee:transform>
+            
+            <logger level="DEBUG" doc:name="Log XML Valid" message="XML validation passed"/>
+            
+            <error-handler>
+                <on-error-propagate type="ANY">
+                    <logger level="ERROR" doc:name="Log XML Parse Error"
+                        message='#["[XML_PARSE_ERROR] CorrelationId: " ++ vars.correlationId ++ " | FileName: " ++ vars.fileName ++ " | Error: " ++ error.description]'/>
+                    <raise-error doc:name="Raise Validation Error" type="APP:VALIDATION_ERROR" description="#['Invalid XML format: ' ++ error.description]"/>
+                </on-error-propagate>
+            </error-handler>
+        </try>
+    </sub-flow>
+
+    <!-- ============================================================================ -->
+    <!-- TXT Validation Subflow                                                       -->
+    <!-- ============================================================================ -->
+    
+    <sub-flow name="validate-txt-file-subflow">
+        <logger level="DEBUG" doc:name="Log TXT Validation" message="Validating TXT file"/>
+        
+        <try doc:name="Parse TXT">
+            <ee:transform doc:name="Parse TXT Content">
+                <ee:message>
+                    <ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+vars.fileContent as String]]></ee:set-payload>
+                </ee:message>
+                <ee:variables>
+                    <ee:set-variable variableName="parsedData"><![CDATA[%dw 2.0
+output application/java
+---
+vars.fileContent as String]]></ee:set-variable>
+                    <ee:set-variable variableName="recordCount"><![CDATA[%dw 2.0
+output application/java
+var lines = (vars.fileContent as String) splitBy "\n"
+---
+sizeOf(lines filter !isEmpty(trim($)))]]></ee:set-variable>
+                </ee:variables>
+            </ee:transform>
+            
+            <!-- Validate content is not empty -->
+            <choice doc:name="Check Content">
+                <when expression="#[isEmpty(vars.parsedData)]">
+                    <raise-error doc:name="Raise Empty File Error" type="APP:VALIDATION_ERROR" description="TXT file is empty"/>
+                </when>
+                <otherwise>
+                    <logger level="DEBUG" doc:name="Log TXT Valid" 
+                        message='#["TXT validation passed with " ++ (vars.recordCount as String) ++ " lines"]'/>
+                </otherwise>
+            </choice>
+            
+            <error-handler>
+                <on-error-propagate type="ANY">
+                    <logger level="ERROR" doc:name="Log TXT Parse Error"
+                        message='#["[TXT_PARSE_ERROR] CorrelationId: " ++ vars.correlationId ++ " | FileName: " ++ vars.fileName ++ " | Error: " ++ error.description]'/>
+                    <raise-error doc:name="Raise Validation Error" type="APP:VALIDATION_ERROR" description="#['Invalid TXT format: ' ++ error.description]"/>
+                </on-error-propagate>
+            </error-handler>
+        </try>
+    </sub-flow>
+
+</mule>

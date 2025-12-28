@@ -1,0 +1,35 @@
+# ============================================================================
+# Enterprise File Polling Integration - Secure Configuration
+# ============================================================================
+# IMPORTANT: All values must be encrypted using the Secure Properties Tool
+# Command: java -cp secure-properties-tool.jar com.mulesoft.tools.SecurePropertiesTool \
+#          string encrypt AES CBC <key> "<value>"
+# ============================================================================
+
+# SFTP Credentials
+sftp:
+  username: "![encrypted_sftp_username]"
+  password: "![encrypted_sftp_password]"
+  passphrase: "![encrypted_sftp_passphrase]"
+  privateKeyPath: "![encrypted_private_key_path]"
+
+# FTP Credentials
+ftp:
+  username: "![encrypted_ftp_username]"
+  password: "![encrypted_ftp_password]"
+
+# AWS Credentials
+aws:
+  accessKey: "![encrypted_aws_access_key]"
+  secretKey: "![encrypted_aws_secret_key]"
+
+# Azure Storage Credentials
+azure:
+  storage:
+    accountName: "![encrypted_azure_account_name]"
+    accountKey: "![encrypted_azure_account_key]"
+
+# API Credentials (for outbound routing)
+api:
+  clientId: "![encrypted_api_client_id]"
+  clientSecret: "![encrypted_api_client_secret]"

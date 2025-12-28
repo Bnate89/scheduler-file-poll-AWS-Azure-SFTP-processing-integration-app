@@ -1,0 +1,228 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:s3="http://www.mulesoft.org/schema/mule/s3"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+        http://www.mulesoft.org/schema/mule/s3 http://www.mulesoft.org/schema/mule/s3/current/mule-s3.xsd">
+
+    <!-- ============================================================================ -->
+    <!-- AWS S3 Polling Subflow                                                       -->
+    <!-- ============================================================================ -->
+    
+    <sub-flow name="s3-polling-subflow">
+        <logger level="INFO" doc:name="Log S3 Polling Start"
+            message='#["[S3_POLL_START] CorrelationId: " ++ vars.correlationId ++ " | Bucket: " ++ p("s3.bucket") ++ " | Prefix: " ++ p("s3.inbound.prefix")]'/>
+        
+        <set-variable variableName="fileSource" value="S3" doc:name="Set File Source"/>
+        
+        <try doc:name="S3 List Objects">
+            <!-- List objects in S3 bucket with prefix -->
+            <s3:list-objects doc:name="List S3 Objects" 
+                config-ref="Amazon_S3_Config" 
+                bucketName="${s3.bucket}" 
+                prefix="${s3.inbound.prefix}"
+                target="s3ObjectList"/>
+            
+            <logger level="INFO" doc:name="Log Objects Found"
+                message='#["[S3_OBJECTS_FOUND] CorrelationId: " ++ vars.correlationId ++ " | Count: " ++ sizeOf(vars.s3ObjectList)]'/>
+            
+            <!-- Filter supported file formats and exclude directories -->
+            <ee:transform doc:name="Filter Supported Files">
+                <ee:variables>
+                    <ee:set-variable variableName="s3FilesToProcess"><![CDATA[%dw 2.0
+output application/java
+var supportedFormats = (p('file.supported.formats') splitBy ",") map trim($)
+---
+vars.s3ObjectList filter (obj) -> (
+    obj.size > 0 and
+    !(obj.key endsWith "/") and
+    supportedFormats contains lower((obj.key splitBy ".")[-1] default "")
+)]]></ee:set-variable>
+                </ee:variables>
+            </ee:transform>
+            
+            <logger level="INFO" doc:name="Log Filtered Files"
+                message='#["[S3_FILES_FILTERED] CorrelationId: " ++ vars.correlationId ++ " | FilesToProcess: " ++ sizeOf(vars.s3FilesToProcess)]'/>
+            
+            <!-- Process each file -->
+            <foreach collection="#[vars.s3FilesToProcess]" doc:name="Process Each S3 Object">
+                <try doc:name="Process Single S3 Object">
+                    <!-- Set file metadata -->
+                    <ee:transform doc:name="Set File Metadata">
+                        <ee:variables>
+                            <ee:set-variable variableName="s3Key"><![CDATA[%dw 2.0
+output application/java
+---
+payload.key]]></ee:set-variable>
+                            <ee:set-variable variableName="fileName"><![CDATA[%dw 2.0
+output application/java
+---
+(payload.key splitBy "/")[-1]]]></ee:set-variable>
+                            <ee:set-variable variableName="filePath"><![CDATA[%dw 2.0
+output application/java
+---
+payload.key]]></ee:set-variable>
+                            <ee:set-variable variableName="fileSize"><![CDATA[%dw 2.0
+output application/java
+---
+payload.size]]></ee:set-variable>
+                            <ee:set-variable variableName="fileExtension"><![CDATA[%dw 2.0
+output application/java
+---
+lower((payload.key splitBy ".")[-1] default "")]]></ee:set-variable>
+                            <ee:set-variable variableName="s3ETag"><![CDATA[%dw 2.0
+output application/java
+---
+payload.eTag default ""]]></ee:set-variable>
+                        </ee:variables>
+                    </ee:transform>
+                    
+                    <!-- Get object content -->
+                    <s3:get-object doc:name="Get S3 Object" 
+                        config-ref="Amazon_S3_Config" 
+                        bucketName="${s3.bucket}" 
+                        key="#[vars.s3Key]"/>
+                    
+                    <!-- Calculate checksum for idempotency (use ETag if available) -->
+                    <ee:transform doc:name="Calculate Checksum">
+                        <ee:variables>
+                            <ee:set-variable variableName="fileChecksum"><![CDATA[%dw 2.0
+import dw::Crypto
+output application/java
+---
+if (!isEmpty(vars.s3ETag))
+    vars.s3ETag
+else
+    Crypto::hashWith(payload as Binary, "MD5")]]></ee:set-variable>
+                            <ee:set-variable variableName="fileContent"><![CDATA[%dw 2.0
+output application/java
+---
+payload]]></ee:set-variable>
+                        </ee:variables>
+                    </ee:transform>
+                    
+                    <!-- Process the file -->
+                    <flow-ref name="process-file-orchestration-subflow" doc:name="Process File"/>
+                    
+                    <error-handler>
+                        <on-error-continue type="MULE:DUPLICATE_MESSAGE">
+                            <logger level="INFO" doc:name="Log Duplicate Skip"
+                                message='#["[S3_DUPLICATE] CorrelationId: " ++ vars.correlationId ++ " | Key: " ++ vars.s3Key ++ " | File already processed, skipping"]'/>
+                        </on-error-continue>
+                        <on-error-continue type="ANY">
+                            <logger level="ERROR" doc:name="Log File Error"
+                                message='#["[S3_FILE_ERROR] CorrelationId: " ++ vars.correlationId ++ " | Key: " ++ vars.s3Key ++ " | Error: " ++ error.description]'/>
+                            <set-variable variableName="errorCategory" value="#[error.errorType.identifier]" doc:name="Set Error Category"/>
+                            <flow-ref name="move-to-error-directory-subflow" doc:name="Move to Error"/>
+                        </on-error-continue>
+                    </error-handler>
+                </try>
+            </foreach>
+            
+            <error-handler>
+                <on-error-continue type="S3:NO_SUCH_BUCKET">
+                    <logger level="WARN" doc:name="Log Bucket Not Found"
+                        message='#["[S3_BUCKET_NOT_FOUND] CorrelationId: " ++ vars.correlationId ++ " | Bucket does not exist: " ++ p("s3.bucket")]'/>
+                </on-error-continue>
+                <on-error-propagate type="ANY">
+                    <logger level="ERROR" doc:name="Log S3 Error"
+                        message='#["[S3_ERROR] CorrelationId: " ++ vars.correlationId ++ " | Error: " ++ error.description]'/>
+                </on-error-propagate>
+            </error-handler>
+        </try>
+        
+        <logger level="INFO" doc:name="Log S3 Polling End"
+            message='#["[S3_POLL_END] CorrelationId: " ++ vars.correlationId]'/>
+    </sub-flow>
+
+    <!-- ============================================================================ -->
+    <!-- S3 Archive File Subflow                                                      -->
+    <!-- ============================================================================ -->
+    
+    <sub-flow name="s3-archive-file-subflow">
+        <try doc:name="S3 Archive">
+            <ee:transform doc:name="Build Archive Key">
+                <ee:variables>
+                    <ee:set-variable variableName="archiveKey"><![CDATA[%dw 2.0
+output application/java
+---
+p('s3.inbound.archivePrefix') ++ 
+(now() as String {format: "yyyyMMdd"}) ++ "/" ++ 
+vars.fileName]]></ee:set-variable>
+                </ee:variables>
+            </ee:transform>
+            
+            <!-- Copy to archive location -->
+            <s3:copy-object doc:name="Copy to Archive" 
+                config-ref="Amazon_S3_Config" 
+                sourceBucketName="${s3.bucket}" 
+                sourceKey="#[vars.s3Key]"
+                destinationBucketName="${s3.bucket}"
+                destinationKey="#[vars.archiveKey]"/>
+            
+            <!-- Delete original -->
+            <s3:delete-object doc:name="Delete Original" 
+                config-ref="Amazon_S3_Config" 
+                bucketName="${s3.bucket}" 
+                key="#[vars.s3Key]"/>
+            
+            <logger level="DEBUG" doc:name="Log Archive Success"
+                message='#["[S3_ARCHIVED] CorrelationId: " ++ vars.correlationId ++ " | From: " ++ vars.s3Key ++ " | To: " ++ vars.archiveKey]'/>
+            
+            <error-handler>
+                <on-error-continue type="ANY">
+                    <logger level="ERROR" doc:name="Log Archive Error"
+                        message='#["[S3_ARCHIVE_ERROR] CorrelationId: " ++ vars.correlationId ++ " | Key: " ++ vars.s3Key ++ " | Error: " ++ error.description]'/>
+                </on-error-continue>
+            </error-handler>
+        </try>
+    </sub-flow>
+
+    <!-- ============================================================================ -->
+    <!-- S3 Move to Error Subflow                                                     -->
+    <!-- ============================================================================ -->
+    
+    <sub-flow name="s3-move-to-error-subflow">
+        <try doc:name="S3 Move to Error">
+            <ee:transform doc:name="Build Error Key">
+                <ee:variables>
+                    <ee:set-variable variableName="errorKey"><![CDATA[%dw 2.0
+output application/java
+---
+p('s3.inbound.errorPrefix') ++ 
+(now() as String {format: "yyyyMMdd"}) ++ "/" ++ 
+vars.fileName]]></ee:set-variable>
+                </ee:variables>
+            </ee:transform>
+            
+            <!-- Copy to error location -->
+            <s3:copy-object doc:name="Copy to Error" 
+                config-ref="Amazon_S3_Config" 
+                sourceBucketName="${s3.bucket}" 
+                sourceKey="#[vars.s3Key]"
+                destinationBucketName="${s3.bucket}"
+                destinationKey="#[vars.errorKey]"/>
+            
+            <!-- Delete original -->
+            <s3:delete-object doc:name="Delete Original" 
+                config-ref="Amazon_S3_Config" 
+                bucketName="${s3.bucket}" 
+                key="#[vars.s3Key]"/>
+            
+            <logger level="DEBUG" doc:name="Log Error Move Success"
+                message='#["[S3_ERROR_MOVED] CorrelationId: " ++ vars.correlationId ++ " | From: " ++ vars.s3Key ++ " | To: " ++ vars.errorKey]'/>
+            
+            <error-handler>
+                <on-error-continue type="ANY">
+                    <logger level="ERROR" doc:name="Log Error Move Failure"
+                        message='#["[S3_ERROR_MOVE_FAILED] CorrelationId: " ++ vars.correlationId ++ " | Key: " ++ vars.s3Key ++ " | Error: " ++ error.description]'/>
+                </on-error-continue>
+            </error-handler>
+        </try>
+    </sub-flow>
+
+</mule>

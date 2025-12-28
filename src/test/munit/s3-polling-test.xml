@@ -1,0 +1,207 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+      xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:s3="http://www.mulesoft.org/schema/mule/s3"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+        http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+        http://www.mulesoft.org/schema/mule/s3 http://www.mulesoft.org/schema/mule/s3/current/mule-s3.xsd">
+
+    <munit:config name="s3-polling-test-suite.xml"/>
+
+    <!-- ============================================================================ -->
+    <!-- Before Test - Setup S3 Test Context                                          -->
+    <!-- ============================================================================ -->
+    
+    <munit:before-test name="s3-test-before-each">
+        <munit:set-event doc:name="Initialize S3 Test Event">
+            <munit:payload value="#[{}]" mediaType="application/java"/>
+            <munit:variables>
+                <munit:variable key="correlationId" value="#[uuid()]"/>
+                <munit:variable key="fileSource" value="S3"/>
+                <munit:variable key="processedFiles" value="#[[]]"/>
+                <munit:variable key="failedFiles" value="#[[]]"/>
+            </munit:variables>
+        </munit:set-event>
+    </munit:before-test>
+
+    <!-- ============================================================================ -->
+    <!-- Test: S3 List Objects Success                                                -->
+    <!-- ============================================================================ -->
+    
+    <munit:test name="test-s3-list-objects-success" description="Verify S3 polling lists objects correctly">
+        <munit:behavior>
+            <!-- Mock S3 list-objects operation -->
+            <munit-tools:mock-when processor="s3:list-objects">
+                <munit-tools:then-return>
+                    <munit-tools:payload value="#[[
+                        {
+                            key: 'inbound/test-data.csv',
+                            size: 1024,
+                            eTag: 'abc123'
+                        },
+                        {
+                            key: 'inbound/test-data.json',
+                            size: 2048,
+                            eTag: 'def456'
+                        }
+                    ]]" mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            
+            <!-- Mock S3 get-object operation -->
+            <munit-tools:mock-when processor="s3:get-object">
+                <munit-tools:then-return>
+                    <munit-tools:payload value='#["name,email\nJohn,john@test.com"]' mediaType="text/plain"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            
+            <!-- Mock process file orchestration -->
+            <munit-tools:mock-when processor="flow-ref">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute attributeName="name" whereValue="process-file-orchestration-subflow"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        
+        <munit:execution>
+            <flow-ref name="s3-polling-subflow"/>
+        </munit:execution>
+        
+        <munit:validation>
+            <munit-tools:verify-call processor="s3:list-objects" times="1"/>
+            <munit-tools:assert-that expression="#[vars.fileSource]" is="#[MunitTools::equalTo('S3')]" message="File source should be S3"/>
+        </munit:validation>
+    </munit:test>
+
+    <!-- ============================================================================ -->
+    <!-- Test: S3 Bucket Not Found                                                    -->
+    <!-- ============================================================================ -->
+    
+    <munit:test name="test-s3-bucket-not-found" description="Verify S3 handles missing bucket gracefully">
+        <munit:behavior>
+            <!-- Mock S3 list-objects operation with error -->
+            <munit-tools:mock-when processor="s3:list-objects">
+                <munit-tools:then-return>
+                    <munit-tools:error typeId="S3:NO_SUCH_BUCKET"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        
+        <munit:execution>
+            <flow-ref name="s3-polling-subflow"/>
+        </munit:execution>
+        
+        <munit:validation>
+            <!-- Should complete without error due to on-error-continue -->
+            <munit-tools:verify-call processor="s3:list-objects" times="1"/>
+        </munit:validation>
+    </munit:test>
+
+    <!-- ============================================================================ -->
+    <!-- Test: S3 Archive File Success                                                -->
+    <!-- ============================================================================ -->
+    
+    <munit:test name="test-s3-archive-file-success" description="Verify S3 archive copies and deletes file correctly">
+        <munit:behavior>
+            <munit:set-event doc:name="Set S3 Archive Test Variables">
+                <munit:payload value="#[{}]" mediaType="application/java"/>
+                <munit:variables>
+                    <munit:variable key="correlationId" value="#[uuid()]"/>
+                    <munit:variable key="fileSource" value="S3"/>
+                    <munit:variable key="fileName" value="test-file.csv"/>
+                    <munit:variable key="s3Key" value="inbound/test-file.csv"/>
+                </munit:variables>
+            </munit:set-event>
+            
+            <!-- Mock S3 copy-object operation -->
+            <munit-tools:mock-when processor="s3:copy-object">
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+            
+            <!-- Mock S3 delete-object operation -->
+            <munit-tools:mock-when processor="s3:delete-object">
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        
+        <munit:execution>
+            <flow-ref name="s3-archive-file-subflow"/>
+        </munit:execution>
+        
+        <munit:validation>
+            <munit-tools:verify-call processor="s3:copy-object" times="1"/>
+            <munit-tools:verify-call processor="s3:delete-object" times="1"/>
+        </munit:validation>
+    </munit:test>
+
+    <!-- ============================================================================ -->
+    <!-- Test: S3 Move to Error Directory                                             -->
+    <!-- ============================================================================ -->
+    
+    <munit:test name="test-s3-move-to-error" description="Verify S3 moves failed files to error prefix">
+        <munit:behavior>
+            <munit:set-event doc:name="Set S3 Error Test Variables">
+                <munit:payload value="#[{}]" mediaType="application/java"/>
+                <munit:variables>
+                    <munit:variable key="correlationId" value="#[uuid()]"/>
+                    <munit:variable key="fileSource" value="S3"/>
+                    <munit:variable key="fileName" value="error-file.csv"/>
+                    <munit:variable key="s3Key" value="inbound/error-file.csv"/>
+                    <munit:variable key="errorCategory" value="VALIDATION"/>
+                </munit:variables>
+            </munit:set-event>
+            
+            <!-- Mock S3 copy-object operation -->
+            <munit-tools:mock-when processor="s3:copy-object">
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+            
+            <!-- Mock S3 delete-object operation -->
+            <munit-tools:mock-when processor="s3:delete-object">
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        
+        <munit:execution>
+            <flow-ref name="s3-move-to-error-subflow"/>
+        </munit:execution>
+        
+        <munit:validation>
+            <munit-tools:verify-call processor="s3:copy-object" times="1"/>
+            <munit-tools:verify-call processor="s3:delete-object" times="1"/>
+        </munit:validation>
+    </munit:test>
+
+    <!-- ============================================================================ -->
+    <!-- Test: S3 Empty Bucket                                                        -->
+    <!-- ============================================================================ -->
+    
+    <munit:test name="test-s3-empty-bucket" description="Verify S3 handles empty bucket correctly">
+        <munit:behavior>
+            <!-- Mock S3 list-objects operation with empty result -->
+            <munit-tools:mock-when processor="s3:list-objects">
+                <munit-tools:then-return>
+                    <munit-tools:payload value="#[[]]" mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        
+        <munit:execution>
+            <flow-ref name="s3-polling-subflow"/>
+        </munit:execution>
+        
+        <munit:validation>
+            <munit-tools:verify-call processor="s3:list-objects" times="1"/>
+            <!-- get-object should not be called for empty bucket -->
+            <munit-tools:verify-call processor="s3:get-object" times="0"/>
+        </munit:validation>
+    </munit:test>
+
+</mule>

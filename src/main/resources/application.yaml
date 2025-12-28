@@ -1,0 +1,114 @@
+# ============================================================================
+# Enterprise File Polling Integration - Application Configuration
+# ============================================================================
+# Environment: ${mule.env} (dev/qa/prod)
+# ============================================================================
+
+# Scheduler Configuration
+scheduler:
+  cron:
+    expression: "0 0/5 * * * ?"
+    timezone: "UTC"
+  enabled: "true"
+
+# SFTP Configuration
+sftp:
+  enabled: "true"
+  host: "sftp.example.com"
+  port: "22"
+  workingDir: "/data"
+  inbound:
+    directory: "/inbound"
+    archiveDirectory: "/archive"
+    errorDirectory: "/error"
+  connectionTimeout: "30"
+  responseTimeout: "60"
+  reconnect:
+    frequency: "5000"
+    count: "5"
+
+# FTP Configuration
+ftp:
+  enabled: "true"
+  host: "ftp.example.com"
+  port: "21"
+  workingDir: "/data"
+  inbound:
+    directory: "/inbound"
+    archiveDirectory: "/archive"
+    errorDirectory: "/error"
+  connectionTimeout: "30"
+  responseTimeout: "60"
+  passive: "true"
+  transferMode: "BINARY"
+  reconnect:
+    frequency: "5000"
+    count: "5"
+
+# AWS S3 Configuration
+s3:
+  enabled: "true"
+  region: "US_EAST_1"
+  bucket: "enterprise-file-bucket"
+  inbound:
+    prefix: "inbound/"
+    archivePrefix: "archive/"
+    errorPrefix: "error/"
+  reconnect:
+    frequency: "3000"
+    count: "5"
+
+# Azure Blob Storage Configuration
+azure:
+  enabled: "true"
+  storage:
+    containerName: "file-processing"
+    inbound:
+      blobPath: "inbound/"
+      archivePath: "archive/"
+      errorPath: "error/"
+  reconnect:
+    frequency: "3000"
+    count: "5"
+
+# File Processing Configuration
+file:
+  supported:
+    formats: "csv,xml,json,txt"
+  validation:
+    maxSizeBytes: "104857600"
+    minSizeBytes: "1"
+  batch:
+    blockSize: "100"
+    maxConcurrency: "8"
+    maxFailedRecords: "-1"
+
+# Object Store Configuration
+objectstore:
+  processedFiles:
+    entryTtlHours: "168"
+    maxEntries: "50000"
+  distributedLock:
+    entryTtlMinutes: "30"
+    maxEntries: "100"
+
+# Retry Configuration
+retry:
+  maxAttempts: "3"
+  delayMs: "5000"
+
+# Logging Configuration
+logging:
+  level: "INFO"
+  maskSensitiveData: "true"
+
+# Routing Configuration
+routing:
+  database:
+    enabled: "true"
+  api:
+    enabled: "true"
+    endpoint: "https://api.example.com/v1/files"
+  queue:
+    enabled: "false"
+    destination: "file-processing-queue"

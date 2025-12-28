@@ -1,0 +1,12 @@
+{
+  "minMuleVersion": "4.9.3",
+  "javaSpecificationVersions": ["17"],
+  "secureProperties": [
+    "sftp.password",
+    "sftp.passphrase",
+    "ftp.password",
+    "aws.accessKey",
+    "aws.secretKey",
+    "azure.storage.accountKey"
+  ]
+}

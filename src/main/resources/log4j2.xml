@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Configuration status="WARN">
+
+    <!-- ============================================================================ -->
+    <!-- Enterprise File Polling Integration - Log4j2 Configuration                   -->
+    <!-- ============================================================================ -->
+    <!-- 
+        Production-ready logging configuration with:
+        - Correlation ID tracking
+        - Structured logging format
+        - Rolling file appenders
+        - Anypoint Monitoring compatible output
+    -->
+
+    <Properties>
+        <Property name="APP_NAME">file-polling-integration</Property>
+        <Property name="LOG_DIR">${sys:mule.home}${sys:file.separator}logs</Property>
+        <Property name="LOG_PATTERN">%-5p %d{yyyy-MM-dd HH:mm:ss.SSS} [%t] [correlationId: %X{correlationId}] [processor: %X{processorPath}] %c{1}: %m%n</Property>
+        <Property name="JSON_LOG_PATTERN">{"timestamp":"%d{yyyy-MM-dd'T'HH:mm:ss.SSSZ}","level":"%p","thread":"%t","correlationId":"%X{correlationId}","processor":"%X{processorPath}","logger":"%c{1}","message":"%enc{%m}{JSON}"}%n</Property>
+    </Properties>
+
+    <Appenders>
+        <!-- Main Application Log File -->
+        <RollingFile name="file" 
+            fileName="${LOG_DIR}${sys:file.separator}${APP_NAME}.log"
+            filePattern="${LOG_DIR}${sys:file.separator}${APP_NAME}-%d{yyyy-MM-dd}-%i.log.gz">
+            <PatternLayout pattern="${LOG_PATTERN}"/>
+            <Policies>
+                <TimeBasedTriggeringPolicy interval="1" modulate="true"/>
+                <SizeBasedTriggeringPolicy size="50 MB"/>
+            </Policies>
+            <DefaultRolloverStrategy max="30">
+                <Delete basePath="${LOG_DIR}" maxDepth="1">
+                    <IfFileName glob="${APP_NAME}-*.log.gz"/>
+                    <IfLastModified age="30d"/>
+                </Delete>
+            </DefaultRolloverStrategy>
+        </RollingFile>
+
+        <!-- Error Log File (Errors Only) -->
+        <RollingFile name="errorFile" 
+            fileName="${LOG_DIR}${sys:file.separator}${APP_NAME}-error.log"
+            filePattern="${LOG_DIR}${sys:file.separator}${APP_NAME}-error-%d{yyyy-MM-dd}-%i.log.gz">
+            <PatternLayout pattern="${LOG_PATTERN}"/>
+            <Policies>
+                <TimeBasedTriggeringPolicy interval="1" modulate="true"/>
+                <SizeBasedTriggeringPolicy size="25 MB"/>
+            </Policies>
+            <DefaultRolloverStrategy max="30"/>
+            <ThresholdFilter level="ERROR" onMatch="ACCEPT" onMismatch="DENY"/>
+        </RollingFile>
+
+        <!-- JSON Log File (For Anypoint Monitoring / ELK) -->
+        <RollingFile name="jsonFile" 
+            fileName="${LOG_DIR}${sys:file.separator}${APP_NAME}-json.log"
+            filePattern="${LOG_DIR}${sys:file.separator}${APP_NAME}-json-%d{yyyy-MM-dd}-%i.log.gz">
+            <PatternLayout pattern="${JSON_LOG_PATTERN}"/>
+            <Policies>
+                <TimeBasedTriggeringPolicy interval="1" modulate="true"/>
+                <SizeBasedTriggeringPolicy size="50 MB"/>
+            </Policies>
+            <DefaultRolloverStrategy max="14"/>
+        </RollingFile>
+
+        <!-- Console Appender -->
+        <Console name="Console" target="SYSTEM_OUT">
+            <PatternLayout pattern="${LOG_PATTERN}"/>
+        </Console>
+    </Appenders>
+
+    <Loggers>
+        <!-- Application Logger -->
+        <AsyncLogger name="org.mule.runtime.core.internal.processor.LoggerMessageProcessor" level="INFO" additivity="false">
+            <AppenderRef ref="file"/>
+            <AppenderRef ref="jsonFile"/>
+            <AppenderRef ref="errorFile"/>
+            <AppenderRef ref="Console"/>
+        </AsyncLogger>
+
+        <!-- Connector Loggers -->
+        <AsyncLogger name="org.mule.extension.sftp" level="WARN"/>
+        <AsyncLogger name="org.mule.extension.ftp" level="WARN"/>
+        <AsyncLogger name="com.mulesoft.connectors.s3" level="WARN"/>
+        <AsyncLogger name="org.mule.modules.azure" level="WARN"/>
+        
+        <!-- Object Store Logger -->
+        <AsyncLogger name="org.mule.extension.objectstore" level="WARN"/>
+        
+        <!-- Batch Processing Logger -->
+        <AsyncLogger name="org.mule.runtime.module.extension.internal.runtime.source.poll" level="INFO"/>
+        <AsyncLogger name="org.mule.runtime.core.internal.processor.strategy" level="WARN"/>
+        
+        <!-- HTTP Logger (for outbound API calls) -->
+        <AsyncLogger name="org.mule.service.http" level="WARN"/>
+        <AsyncLogger name="org.mule.extension.http" level="WARN"/>
+        
+        <!-- DataWeave Logger -->
+        <AsyncLogger name="org.mule.weave" level="WARN"/>
+        
+        <!-- Scheduler Logger -->
+        <AsyncLogger name="org.mule.runtime.core.internal.source.scheduler" level="INFO"/>
+
+        <!-- Suppress noisy loggers -->
+        <AsyncLogger name="org.apache" level="WARN"/>
+        <AsyncLogger name="org.springframework" level="WARN"/>
+        <AsyncLogger name="com.amazonaws" level="WARN"/>
+        <AsyncLogger name="com.azure" level="WARN"/>
+        <AsyncLogger name="io.netty" level="WARN"/>
+
+        <!-- Root Logger -->
+        <AsyncRoot level="INFO">
+            <AppenderRef ref="file"/>
+            <AppenderRef ref="jsonFile"/>
+            <AppenderRef ref="errorFile"/>
+            <AppenderRef ref="Console"/>
+        </AsyncRoot>
+    </Loggers>
+
+</Configuration>

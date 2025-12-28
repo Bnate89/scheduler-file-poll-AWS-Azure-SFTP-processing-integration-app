@@ -1,0 +1,218 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+      xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+        http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <munit:config name="file-validation-test-suite.xml"/>
+
+    <!-- ============================================================================ -->
+    <!-- Test: CSV Validation Success                                                 -->
+    <!-- ============================================================================ -->
+    
+    <munit:test name="test-csv-validation-success" description="Verify CSV file validation passes for valid CSV">
+        <munit:behavior>
+            <munit:set-event doc:name="Set CSV Test Data">
+                <munit:payload value="#[{}]" mediaType="application/java"/>
+                <munit:variables>
+                    <munit:variable key="correlationId" value="#[uuid()]"/>
+                    <munit:variable key="fileName" value="test-data.csv"/>
+                    <munit:variable key="fileExtension" value="csv"/>
+                    <munit:variable key="fileSize" value="#[1024]"/>
+                    <munit:variable key="fileContent" value='#["name,email,age\nJohn,john@test.com,30\nJane,jane@test.com,25"]'/>
+                </munit:variables>
+            </munit:set-event>
+        </munit:behavior>
+        
+        <munit:execution>
+            <flow-ref name="validate-csv-file-subflow"/>
+        </munit:execution>
+        
+        <munit:validation>
+            <munit-tools:assert-that expression="#[vars.recordCount]" is="#[MunitTools::equalTo(2)]" message="Record count should be 2"/>
+            <munit-tools:assert-that expression="#[vars.parsedData]" is="#[MunitTools::notNullValue()]" message="Parsed data should not be null"/>
+        </munit:validation>
+    </munit:test>
+
+    <!-- ============================================================================ -->
+    <!-- Test: JSON Validation Success                                                -->
+    <!-- ============================================================================ -->
+    
+    <munit:test name="test-json-validation-success" description="Verify JSON file validation passes for valid JSON">
+        <munit:behavior>
+            <munit:set-event doc:name="Set JSON Test Data">
+                <munit:payload value="#[{}]" mediaType="application/java"/>
+                <munit:variables>
+                    <munit:variable key="correlationId" value="#[uuid()]"/>
+                    <munit:variable key="fileName" value="test-data.json"/>
+                    <munit:variable key="fileExtension" value="json"/>
+                    <munit:variable key="fileSize" value="#[512]"/>
+                    <munit:variable key="fileContent" value='#["[{\"name\":\"John\",\"email\":\"john@test.com\"},{\"name\":\"Jane\",\"email\":\"jane@test.com\"}]"]'/>
+                </munit:variables>
+            </munit:set-event>
+        </munit:behavior>
+        
+        <munit:execution>
+            <flow-ref name="validate-json-file-subflow"/>
+        </munit:execution>
+        
+        <munit:validation>
+            <munit-tools:assert-that expression="#[vars.recordCount]" is="#[MunitTools::equalTo(2)]" message="Record count should be 2"/>
+            <munit-tools:assert-that expression="#[vars.parsedData]" is="#[MunitTools::notNullValue()]" message="Parsed data should not be null"/>
+        </munit:validation>
+    </munit:test>
+
+    <!-- ============================================================================ -->
+    <!-- Test: XML Validation Success                                                 -->
+    <!-- ============================================================================ -->
+    
+    <munit:test name="test-xml-validation-success" description="Verify XML file validation passes for valid XML">
+        <munit:behavior>
+            <munit:set-event doc:name="Set XML Test Data">
+                <munit:payload value="#[{}]" mediaType="application/java"/>
+                <munit:variables>
+                    <munit:variable key="correlationId" value="#[uuid()]"/>
+                    <munit:variable key="fileName" value="test-data.xml"/>
+                    <munit:variable key="fileExtension" value="xml"/>
+                    <munit:variable key="fileSize" value="#[256]"/>
+                    <munit:variable key="fileContent" value='#["<root><item><name>John</name></item></root>"]'/>
+                </munit:variables>
+            </munit:set-event>
+        </munit:behavior>
+        
+        <munit:execution>
+            <flow-ref name="validate-xml-file-subflow"/>
+        </munit:execution>
+        
+        <munit:validation>
+            <munit-tools:assert-that expression="#[vars.parsedData]" is="#[MunitTools::notNullValue()]" message="Parsed data should not be null"/>
+        </munit:validation>
+    </munit:test>
+
+    <!-- ============================================================================ -->
+    <!-- Test: TXT Validation Success                                                 -->
+    <!-- ============================================================================ -->
+    
+    <munit:test name="test-txt-validation-success" description="Verify TXT file validation passes for valid TXT">
+        <munit:behavior>
+            <munit:set-event doc:name="Set TXT Test Data">
+                <munit:payload value="#[{}]" mediaType="application/java"/>
+                <munit:variables>
+                    <munit:variable key="correlationId" value="#[uuid()]"/>
+                    <munit:variable key="fileName" value="test-data.txt"/>
+                    <munit:variable key="fileExtension" value="txt"/>
+                    <munit:variable key="fileSize" value="#[100]"/>
+                    <munit:variable key="fileContent" value='#["Line 1\nLine 2\nLine 3"]'/>
+                </munit:variables>
+            </munit:set-event>
+        </munit:behavior>
+        
+        <munit:execution>
+            <flow-ref name="validate-txt-file-subflow"/>
+        </munit:execution>
+        
+        <munit:validation>
+            <munit-tools:assert-that expression="#[vars.recordCount]" is="#[MunitTools::equalTo(3)]" message="Record count should be 3"/>
+            <munit-tools:assert-that expression="#[vars.parsedData]" is="#[MunitTools::notNullValue()]" message="Parsed data should not be null"/>
+        </munit:validation>
+    </munit:test>
+
+    <!-- ============================================================================ -->
+    <!-- Test: File Size Too Small                                                    -->
+    <!-- ============================================================================ -->
+    
+    <munit:test name="test-file-size-too-small" description="Verify validation fails for file below minimum size" expectedErrorType="APP:VALIDATION_ERROR">
+        <munit:behavior>
+            <munit:set-event doc:name="Set Small File Test Data">
+                <munit:payload value="#[{}]" mediaType="application/java"/>
+                <munit:variables>
+                    <munit:variable key="correlationId" value="#[uuid()]"/>
+                    <munit:variable key="fileName" value="empty.csv"/>
+                    <munit:variable key="fileExtension" value="csv"/>
+                    <munit:variable key="fileSize" value="#[0]"/>
+                    <munit:variable key="fileContent" value='#[""]'/>
+                </munit:variables>
+            </munit:set-event>
+        </munit:behavior>
+        
+        <munit:execution>
+            <flow-ref name="file-validation-subflow"/>
+        </munit:execution>
+    </munit:test>
+
+    <!-- ============================================================================ -->
+    <!-- Test: Invalid JSON Format                                                    -->
+    <!-- ============================================================================ -->
+    
+    <munit:test name="test-invalid-json-format" description="Verify validation fails for invalid JSON" expectedErrorType="APP:VALIDATION_ERROR">
+        <munit:behavior>
+            <munit:set-event doc:name="Set Invalid JSON Test Data">
+                <munit:payload value="#[{}]" mediaType="application/java"/>
+                <munit:variables>
+                    <munit:variable key="correlationId" value="#[uuid()]"/>
+                    <munit:variable key="fileName" value="invalid.json"/>
+                    <munit:variable key="fileExtension" value="json"/>
+                    <munit:variable key="fileSize" value="#[50]"/>
+                    <munit:variable key="fileContent" value='#["{invalid json content"]'/>
+                </munit:variables>
+            </munit:set-event>
+        </munit:behavior>
+        
+        <munit:execution>
+            <flow-ref name="validate-json-file-subflow"/>
+        </munit:execution>
+    </munit:test>
+
+    <!-- ============================================================================ -->
+    <!-- Test: Invalid XML Format                                                     -->
+    <!-- ============================================================================ -->
+    
+    <munit:test name="test-invalid-xml-format" description="Verify validation fails for invalid XML" expectedErrorType="APP:VALIDATION_ERROR">
+        <munit:behavior>
+            <munit:set-event doc:name="Set Invalid XML Test Data">
+                <munit:payload value="#[{}]" mediaType="application/java"/>
+                <munit:variables>
+                    <munit:variable key="correlationId" value="#[uuid()]"/>
+                    <munit:variable key="fileName" value="invalid.xml"/>
+                    <munit:variable key="fileExtension" value="xml"/>
+                    <munit:variable key="fileSize" value="#[50]"/>
+                    <munit:variable key="fileContent" value='#["<root><unclosed>"]'/>
+                </munit:variables>
+            </munit:set-event>
+        </munit:behavior>
+        
+        <munit:execution>
+            <flow-ref name="validate-xml-file-subflow"/>
+        </munit:execution>
+    </munit:test>
+
+    <!-- ============================================================================ -->
+    <!-- Test: Unsupported File Format                                                -->
+    <!-- ============================================================================ -->
+    
+    <munit:test name="test-unsupported-file-format" description="Verify validation fails for unsupported format" expectedErrorType="APP:VALIDATION_ERROR">
+        <munit:behavior>
+            <munit:set-event doc:name="Set Unsupported Format Test Data">
+                <munit:payload value="#[{}]" mediaType="application/java"/>
+                <munit:variables>
+                    <munit:variable key="correlationId" value="#[uuid()]"/>
+                    <munit:variable key="fileName" value="test.pdf"/>
+                    <munit:variable key="fileExtension" value="pdf"/>
+                    <munit:variable key="fileSize" value="#[1024]"/>
+                    <munit:variable key="fileContent" value='#["binary content"]'/>
+                </munit:variables>
+            </munit:set-event>
+        </munit:behavior>
+        
+        <munit:execution>
+            <flow-ref name="file-validation-subflow"/>
+        </munit:execution>
+    </munit:test>
+
+</mule>

@@ -1,0 +1,354 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:batch="http://www.mulesoft.org/schema/mule/batch"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+        http://www.mulesoft.org/schema/mule/batch http://www.mulesoft.org/schema/mule/batch/current/mule-batch.xsd">
+
+    <!-- ============================================================================ -->
+    <!-- File Transformation Subflow                                                  -->
+    <!-- ============================================================================ -->
+    
+    <sub-flow name="file-transformation-subflow">
+        <logger level="DEBUG" doc:name="Log Transformation Start"
+            message='#["[TRANSFORM_START] CorrelationId: " ++ vars.correlationId ++ " | FileName: " ++ vars.fileName ++ " | Extension: " ++ vars.fileExtension ++ " | RecordCount: " ++ (vars.recordCount default 0)]'/>
+        
+        <!-- Determine if batch processing is needed for large files -->
+        <choice doc:name="Check Batch Processing Required">
+            <when expression="#[(vars.recordCount default 0) &gt; (p('file.batch.blockSize') as Number * 10)]">
+                <!-- Large file - use batch processing -->
+                <logger level="INFO" doc:name="Log Batch Processing"
+                    message='#["[BATCH_PROCESSING] CorrelationId: " ++ vars.correlationId ++ " | FileName: " ++ vars.fileName ++ " | RecordCount: " ++ vars.recordCount ++ " | Using batch processing"]'/>
+                <flow-ref name="batch-file-transformation-flow" doc:name="Batch Transform"/>
+            </when>
+            <otherwise>
+                <!-- Small file - use inline transformation -->
+                <flow-ref name="inline-file-transformation-subflow" doc:name="Inline Transform"/>
+            </otherwise>
+        </choice>
+        
+        <logger level="INFO" doc:name="Log Transformation Complete"
+            message='#["[TRANSFORM_COMPLETE] CorrelationId: " ++ vars.correlationId ++ " | FileName: " ++ vars.fileName]'/>
+    </sub-flow>
+
+    <!-- ============================================================================ -->
+    <!-- Inline File Transformation Subflow (Small Files)                             -->
+    <!-- ============================================================================ -->
+    
+    <sub-flow name="inline-file-transformation-subflow">
+        <logger level="DEBUG" doc:name="Log Inline Transform" message="Using inline transformation for small file"/>
+        
+        <!-- Transform based on file type -->
+        <choice doc:name="Transform by File Type">
+            <when expression='#[vars.fileExtension == "csv"]'>
+                <flow-ref name="transform-csv-subflow" doc:name="Transform CSV"/>
+            </when>
+            <when expression='#[vars.fileExtension == "json"]'>
+                <flow-ref name="transform-json-subflow" doc:name="Transform JSON"/>
+            </when>
+            <when expression='#[vars.fileExtension == "xml"]'>
+                <flow-ref name="transform-xml-subflow" doc:name="Transform XML"/>
+            </when>
+            <when expression='#[vars.fileExtension == "txt"]'>
+                <flow-ref name="transform-txt-subflow" doc:name="Transform TXT"/>
+            </when>
+            <otherwise>
+                <logger level="WARN" doc:name="Log No Transform" message="No transformation defined for this file type"/>
+            </otherwise>
+        </choice>
+    </sub-flow>
+
+    <!-- ============================================================================ -->
+    <!-- CSV Transformation Subflow                                                   -->
+    <!-- ============================================================================ -->
+    
+    <sub-flow name="transform-csv-subflow">
+        <ee:transform doc:name="Transform CSV Data">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    metadata: {
+        correlationId: vars.correlationId,
+        fileName: vars.fileName,
+        fileSource: vars.fileSource,
+        fileType: "CSV",
+        recordCount: vars.recordCount,
+        processedAt: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+        checksum: vars.fileChecksum
+    },
+    records: vars.parsedData map (record, index) -> {
+        recordIndex: index + 1,
+        data: record,
+        transformedAt: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"}
+    }
+}]]></ee:set-payload>
+            </ee:message>
+            <ee:variables>
+                <ee:set-variable variableName="transformedPayload"><![CDATA[%dw 2.0
+output application/java
+---
+{
+    metadata: {
+        correlationId: vars.correlationId,
+        fileName: vars.fileName,
+        fileSource: vars.fileSource,
+        fileType: "CSV",
+        recordCount: vars.recordCount,
+        processedAt: now(),
+        checksum: vars.fileChecksum
+    },
+    records: vars.parsedData
+}]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+    </sub-flow>
+
+    <!-- ============================================================================ -->
+    <!-- JSON Transformation Subflow                                                  -->
+    <!-- ============================================================================ -->
+    
+    <sub-flow name="transform-json-subflow">
+        <ee:transform doc:name="Transform JSON Data">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    metadata: {
+        correlationId: vars.correlationId,
+        fileName: vars.fileName,
+        fileSource: vars.fileSource,
+        fileType: "JSON",
+        recordCount: vars.recordCount,
+        processedAt: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+        checksum: vars.fileChecksum
+    },
+    records: if (vars.parsedData is Array)
+        (vars.parsedData map (record, index) -> {
+            recordIndex: index + 1,
+            data: record,
+            transformedAt: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"}
+        })
+    else
+        [{
+            recordIndex: 1,
+            data: vars.parsedData,
+            transformedAt: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"}
+        }]
+}]]></ee:set-payload>
+            </ee:message>
+            <ee:variables>
+                <ee:set-variable variableName="transformedPayload"><![CDATA[%dw 2.0
+output application/java
+---
+{
+    metadata: {
+        correlationId: vars.correlationId,
+        fileName: vars.fileName,
+        fileSource: vars.fileSource,
+        fileType: "JSON",
+        recordCount: vars.recordCount,
+        processedAt: now(),
+        checksum: vars.fileChecksum
+    },
+    records: vars.parsedData
+}]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+    </sub-flow>
+
+    <!-- ============================================================================ -->
+    <!-- XML Transformation Subflow                                                   -->
+    <!-- ============================================================================ -->
+    
+    <sub-flow name="transform-xml-subflow">
+        <ee:transform doc:name="Transform XML Data">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    metadata: {
+        correlationId: vars.correlationId,
+        fileName: vars.fileName,
+        fileSource: vars.fileSource,
+        fileType: "XML",
+        recordCount: vars.recordCount,
+        processedAt: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+        checksum: vars.fileChecksum
+    },
+    records: [{
+        recordIndex: 1,
+        data: vars.parsedData,
+        transformedAt: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"}
+    }]
+}]]></ee:set-payload>
+            </ee:message>
+            <ee:variables>
+                <ee:set-variable variableName="transformedPayload"><![CDATA[%dw 2.0
+output application/java
+---
+{
+    metadata: {
+        correlationId: vars.correlationId,
+        fileName: vars.fileName,
+        fileSource: vars.fileSource,
+        fileType: "XML",
+        recordCount: vars.recordCount,
+        processedAt: now(),
+        checksum: vars.fileChecksum
+    },
+    records: vars.parsedData
+}]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+    </sub-flow>
+
+    <!-- ============================================================================ -->
+    <!-- TXT Transformation Subflow                                                   -->
+    <!-- ============================================================================ -->
+    
+    <sub-flow name="transform-txt-subflow">
+        <ee:transform doc:name="Transform TXT Data">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var lines = (vars.parsedData splitBy "\n") filter !isEmpty(trim($))
+---
+{
+    metadata: {
+        correlationId: vars.correlationId,
+        fileName: vars.fileName,
+        fileSource: vars.fileSource,
+        fileType: "TXT",
+        recordCount: sizeOf(lines),
+        processedAt: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+        checksum: vars.fileChecksum
+    },
+    records: lines map (line, index) -> {
+        recordIndex: index + 1,
+        data: {
+            lineContent: trim(line)
+        },
+        transformedAt: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"}
+    }
+}]]></ee:set-payload>
+            </ee:message>
+            <ee:variables>
+                <ee:set-variable variableName="transformedPayload"><![CDATA[%dw 2.0
+output application/java
+var lines = (vars.parsedData splitBy "\n") filter !isEmpty(trim($))
+---
+{
+    metadata: {
+        correlationId: vars.correlationId,
+        fileName: vars.fileName,
+        fileSource: vars.fileSource,
+        fileType: "TXT",
+        recordCount: sizeOf(lines),
+        processedAt: now(),
+        checksum: vars.fileChecksum
+    },
+    records: lines
+}]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+    </sub-flow>
+
+    <!-- ============================================================================ -->
+    <!-- Batch File Transformation Flow (Large Files)                                 -->
+    <!-- ============================================================================ -->
+    
+    <flow name="batch-file-transformation-flow">
+        <logger level="INFO" doc:name="Log Batch Start"
+            message='#["[BATCH_START] CorrelationId: " ++ vars.correlationId ++ " | FileName: " ++ vars.fileName ++ " | RecordCount: " ++ vars.recordCount]'/>
+        
+        <!-- Prepare payload for batch -->
+        <ee:transform doc:name="Prepare Batch Input">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+if (vars.parsedData is Array)
+    vars.parsedData
+else
+    [vars.parsedData]]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+        
+        <batch:job jobName="file-transformation-batch" 
+            blockSize="${file.batch.blockSize}" 
+            maxConcurrency="${file.batch.maxConcurrency}"
+            maxFailedRecords="${file.batch.maxFailedRecords}">
+            
+            <batch:process-records>
+                <batch:step name="transform-record-step">
+                    <ee:transform doc:name="Transform Record">
+                        <ee:message>
+                            <ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+{
+    recordIndex: vars.counter default 0,
+    data: payload,
+    transformedAt: now(),
+    correlationId: vars.correlationId
+}]]></ee:set-payload>
+                        </ee:message>
+                    </ee:transform>
+                </batch:step>
+                
+                <batch:step name="aggregate-records-step">
+                    <batch:aggregator size="500">
+                        <ee:transform doc:name="Aggregate Batch Records">
+                            <ee:variables>
+                                <ee:set-variable variableName="batchRecords"><![CDATA[%dw 2.0
+output application/java
+---
+payload]]></ee:set-variable>
+                            </ee:variables>
+                        </ee:transform>
+                        
+                        <logger level="DEBUG" doc:name="Log Batch Aggregation"
+                            message='#["[BATCH_AGGREGATE] CorrelationId: " ++ vars.correlationId ++ " | BatchSize: " ++ sizeOf(vars.batchRecords)]'/>
+                    </batch:aggregator>
+                </batch:step>
+            </batch:process-records>
+            
+            <batch:on-complete>
+                <logger level="INFO" doc:name="Log Batch Complete"
+                    message='#["[BATCH_COMPLETE] CorrelationId: " ++ vars.correlationId ++ " | TotalRecords: " ++ payload.totalRecords ++ " | SuccessfulRecords: " ++ payload.successfulRecords ++ " | FailedRecords: " ++ payload.failedRecords]'/>
+                
+                <!-- Build final transformed payload -->
+                <ee:transform doc:name="Build Final Payload">
+                    <ee:variables>
+                        <ee:set-variable variableName="transformedPayload"><![CDATA[%dw 2.0
+output application/java
+---
+{
+    metadata: {
+        correlationId: vars.correlationId,
+        fileName: vars.fileName,
+        fileSource: vars.fileSource,
+        fileType: upper(vars.fileExtension),
+        recordCount: payload.totalRecords,
+        successfulRecords: payload.successfulRecords,
+        failedRecords: payload.failedRecords,
+        processedAt: now(),
+        checksum: vars.fileChecksum,
+        batchProcessed: true
+    }
+}]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+            </batch:on-complete>
+        </batch:job>
+    </flow>
+
+</mule>

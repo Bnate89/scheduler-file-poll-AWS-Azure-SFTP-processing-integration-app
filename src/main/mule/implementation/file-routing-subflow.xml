@@ -1,0 +1,277 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <!-- ============================================================================ -->
+    <!-- File Routing Subflow                                                         -->
+    <!-- ============================================================================ -->
+    
+    <sub-flow name="file-routing-subflow">
+        <logger level="DEBUG" doc:name="Log Routing Start"
+            message='#["[ROUTING_START] CorrelationId: " ++ vars.correlationId ++ " | FileName: " ++ vars.fileName]'/>
+        
+        <!-- Store original payload for multiple routing destinations -->
+        <set-variable variableName="routingPayload" value="#[payload]" doc:name="Store Routing Payload"/>
+        
+        <!-- Initialize routing results -->
+        <ee:transform doc:name="Initialize Routing Results">
+            <ee:variables>
+                <ee:set-variable variableName="routingResults"><![CDATA[%dw 2.0
+output application/java
+---
+{
+    database: { enabled: false, success: false, message: "" },
+    api: { enabled: false, success: false, message: "" },
+    queue: { enabled: false, success: false, message: "" }
+}]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        
+        <!-- Route to Database if enabled -->
+        <choice doc:name="Check Database Routing">
+            <when expression='#[p("routing.database.enabled") == "true"]'>
+                <try doc:name="Route to Database">
+                    <flow-ref name="route-to-database-subflow" doc:name="Route to Database"/>
+                    
+                    <ee:transform doc:name="Update DB Routing Result">
+                        <ee:variables>
+                            <ee:set-variable variableName="routingResults"><![CDATA[%dw 2.0
+output application/java
+---
+vars.routingResults ++ {
+    database: { enabled: true, success: true, message: "Successfully routed to database" }
+}]]></ee:set-variable>
+                        </ee:variables>
+                    </ee:transform>
+                    
+                    <error-handler>
+                        <on-error-continue type="ANY">
+                            <logger level="ERROR" doc:name="Log DB Routing Error"
+                                message='#["[ROUTING_DB_ERROR] CorrelationId: " ++ vars.correlationId ++ " | Error: " ++ error.description]'/>
+                            <ee:transform doc:name="Update DB Routing Failure">
+                                <ee:variables>
+                                    <ee:set-variable variableName="routingResults"><![CDATA[%dw 2.0
+output application/java
+---
+vars.routingResults ++ {
+    database: { enabled: true, success: false, message: error.description }
+}]]></ee:set-variable>
+                                </ee:variables>
+                            </ee:transform>
+                        </on-error-continue>
+                    </error-handler>
+                </try>
+            </when>
+            <otherwise>
+                <logger level="DEBUG" doc:name="DB Routing Disabled" message="Database routing is disabled"/>
+            </otherwise>
+        </choice>
+        
+        <!-- Restore payload for next routing -->
+        <set-payload value="#[vars.routingPayload]" doc:name="Restore Payload"/>
+        
+        <!-- Route to API if enabled -->
+        <choice doc:name="Check API Routing">
+            <when expression='#[p("routing.api.enabled") == "true"]'>
+                <try doc:name="Route to API">
+                    <flow-ref name="route-to-api-subflow" doc:name="Route to API"/>
+                    
+                    <ee:transform doc:name="Update API Routing Result">
+                        <ee:variables>
+                            <ee:set-variable variableName="routingResults"><![CDATA[%dw 2.0
+output application/java
+---
+vars.routingResults ++ {
+    api: { enabled: true, success: true, message: "Successfully routed to API" }
+}]]></ee:set-variable>
+                        </ee:variables>
+                    </ee:transform>
+                    
+                    <error-handler>
+                        <on-error-continue type="ANY">
+                            <logger level="ERROR" doc:name="Log API Routing Error"
+                                message='#["[ROUTING_API_ERROR] CorrelationId: " ++ vars.correlationId ++ " | Error: " ++ error.description]'/>
+                            <ee:transform doc:name="Update API Routing Failure">
+                                <ee:variables>
+                                    <ee:set-variable variableName="routingResults"><![CDATA[%dw 2.0
+output application/java
+---
+vars.routingResults ++ {
+    api: { enabled: true, success: false, message: error.description }
+}]]></ee:set-variable>
+                                </ee:variables>
+                            </ee:transform>
+                        </on-error-continue>
+                    </error-handler>
+                </try>
+            </when>
+            <otherwise>
+                <logger level="DEBUG" doc:name="API Routing Disabled" message="API routing is disabled"/>
+            </otherwise>
+        </choice>
+        
+        <!-- Restore payload for next routing -->
+        <set-payload value="#[vars.routingPayload]" doc:name="Restore Payload"/>
+        
+        <!-- Route to Queue if enabled -->
+        <choice doc:name="Check Queue Routing">
+            <when expression='#[p("routing.queue.enabled") == "true"]'>
+                <try doc:name="Route to Queue">
+                    <flow-ref name="route-to-queue-subflow" doc:name="Route to Queue"/>
+                    
+                    <ee:transform doc:name="Update Queue Routing Result">
+                        <ee:variables>
+                            <ee:set-variable variableName="routingResults"><![CDATA[%dw 2.0
+output application/java
+---
+vars.routingResults ++ {
+    queue: { enabled: true, success: true, message: "Successfully routed to queue" }
+}]]></ee:set-variable>
+                        </ee:variables>
+                    </ee:transform>
+                    
+                    <error-handler>
+                        <on-error-continue type="ANY">
+                            <logger level="ERROR" doc:name="Log Queue Routing Error"
+                                message='#["[ROUTING_QUEUE_ERROR] CorrelationId: " ++ vars.correlationId ++ " | Error: " ++ error.description]'/>
+                            <ee:transform doc:name="Update Queue Routing Failure">
+                                <ee:variables>
+                                    <ee:set-variable variableName="routingResults"><![CDATA[%dw 2.0
+output application/java
+---
+vars.routingResults ++ {
+    queue: { enabled: true, success: false, message: error.description }
+}]]></ee:set-variable>
+                                </ee:variables>
+                            </ee:transform>
+                        </on-error-continue>
+                    </error-handler>
+                </try>
+            </when>
+            <otherwise>
+                <logger level="DEBUG" doc:name="Queue Routing Disabled" message="Queue routing is disabled"/>
+            </otherwise>
+        </choice>
+        
+        <!-- Log routing summary -->
+        <logger level="INFO" doc:name="Log Routing Complete"
+            message='#["[ROUTING_COMPLETE] CorrelationId: " ++ vars.correlationId ++ " | FileName: " ++ vars.fileName ++ " | Results: DB=" ++ (vars.routingResults.database.success as String) ++ ", API=" ++ (vars.routingResults.api.success as String) ++ ", Queue=" ++ (vars.routingResults.queue.success as String)]'/>
+        
+        <!-- Restore original payload -->
+        <set-payload value="#[vars.routingPayload]" doc:name="Restore Final Payload"/>
+    </sub-flow>
+
+    <!-- ============================================================================ -->
+    <!-- Route to Database Subflow                                                    -->
+    <!-- ============================================================================ -->
+    
+    <sub-flow name="route-to-database-subflow">
+        <logger level="DEBUG" doc:name="Log DB Routing"
+            message='#["[ROUTING_DB] CorrelationId: " ++ vars.correlationId ++ " | FileName: " ++ vars.fileName ++ " | Routing to database"]'/>
+        
+        <!-- Prepare database payload -->
+        <ee:transform doc:name="Prepare DB Payload">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    correlationId: vars.correlationId,
+    fileName: vars.fileName,
+    fileSource: vars.fileSource,
+    fileType: vars.fileExtension,
+    recordCount: vars.recordCount default 0,
+    checksum: vars.fileChecksum,
+    processedAt: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+    status: "PROCESSED",
+    metadata: payload.metadata default {},
+    recordsSummary: {
+        total: sizeOf(payload.records default []),
+        sampleRecords: (payload.records default [])[0 to 2]
+    }
+}]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+        
+        <!-- Database insert would go here - placeholder for actual DB connector -->
+        <logger level="INFO" doc:name="Log DB Insert"
+            message='#["[DB_INSERT] CorrelationId: " ++ vars.correlationId ++ " | FileName: " ++ vars.fileName ++ " | Records prepared for database insertion"]'/>
+        
+        <!-- Note: Actual database connector configuration would be added here -->
+        <!-- Example: <db:insert config-ref="Database_Config" ... /> -->
+    </sub-flow>
+
+    <!-- ============================================================================ -->
+    <!-- Route to API Subflow                                                         -->
+    <!-- ============================================================================ -->
+    
+    <sub-flow name="route-to-api-subflow">
+        <logger level="DEBUG" doc:name="Log API Routing"
+            message='#["[ROUTING_API] CorrelationId: " ++ vars.correlationId ++ " | FileName: " ++ vars.fileName ++ " | Routing to API endpoint: " ++ p("routing.api.endpoint")]'/>
+        
+        <!-- Prepare API payload -->
+        <ee:transform doc:name="Prepare API Payload">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    correlationId: vars.correlationId,
+    fileName: vars.fileName,
+    fileSource: vars.fileSource,
+    fileType: vars.fileExtension,
+    processedAt: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+    data: payload
+}]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+        
+        <!-- API call would go here - placeholder for actual HTTP Request -->
+        <logger level="INFO" doc:name="Log API Call"
+            message='#["[API_CALL] CorrelationId: " ++ vars.correlationId ++ " | FileName: " ++ vars.fileName ++ " | Payload prepared for API endpoint"]'/>
+        
+        <!-- Note: Actual HTTP Request connector configuration would be added here -->
+        <!-- Example: <http:request config-ref="HTTP_Request_Config" method="POST" path="/files" /> -->
+    </sub-flow>
+
+    <!-- ============================================================================ -->
+    <!-- Route to Queue Subflow                                                       -->
+    <!-- ============================================================================ -->
+    
+    <sub-flow name="route-to-queue-subflow">
+        <logger level="DEBUG" doc:name="Log Queue Routing"
+            message='#["[ROUTING_QUEUE] CorrelationId: " ++ vars.correlationId ++ " | FileName: " ++ vars.fileName ++ " | Routing to queue: " ++ p("routing.queue.destination")]'/>
+        
+        <!-- Prepare queue message -->
+        <ee:transform doc:name="Prepare Queue Message">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    messageId: uuid(),
+    correlationId: vars.correlationId,
+    fileName: vars.fileName,
+    fileSource: vars.fileSource,
+    fileType: vars.fileExtension,
+    timestamp: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+    data: payload
+}]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+        
+        <!-- Queue publish would go here - placeholder for actual queue connector -->
+        <logger level="INFO" doc:name="Log Queue Publish"
+            message='#["[QUEUE_PUBLISH] CorrelationId: " ++ vars.correlationId ++ " | FileName: " ++ vars.fileName ++ " | Message prepared for queue"]'/>
+        
+        <!-- Note: Actual queue connector configuration would be added here -->
+        <!-- Example: <vm:publish config-ref="VM_Config" queueName="${routing.queue.destination}" /> -->
+        <!-- Or: <jms:publish config-ref="JMS_Config" destination="${routing.queue.destination}" /> -->
+    </sub-flow>
+
+</mule>

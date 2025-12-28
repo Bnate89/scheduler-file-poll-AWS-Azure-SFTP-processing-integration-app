@@ -1,0 +1,210 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+      xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:os="http://www.mulesoft.org/schema/mule/os"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+        http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+        http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+    <munit:config name="scheduler-file-polling-test-suite.xml"/>
+
+    <!-- ============================================================================ -->
+    <!-- Before Suite - Initialize Test Environment                                   -->
+    <!-- ============================================================================ -->
+    
+    <munit:before-suite name="scheduler-test-before-suite">
+        <logger level="INFO" message="[TEST_SUITE_START] Initializing scheduler file polling test suite"/>
+    </munit:before-suite>
+
+    <!-- ============================================================================ -->
+    <!-- After Suite - Cleanup Test Environment                                       -->
+    <!-- ============================================================================ -->
+    
+    <munit:after-suite name="scheduler-test-after-suite">
+        <logger level="INFO" message="[TEST_SUITE_END] Scheduler file polling test suite completed"/>
+    </munit:after-suite>
+
+    <!-- ============================================================================ -->
+    <!-- Before Test - Setup Test Context                                             -->
+    <!-- ============================================================================ -->
+    
+    <munit:before-test name="scheduler-test-before-each">
+        <munit:set-event doc:name="Initialize Test Event">
+            <munit:payload value="#[{}]" mediaType="application/java"/>
+            <munit:variables>
+                <munit:variable key="correlationId" value="#[uuid()]"/>
+                <munit:variable key="jobStartTime" value="#[now()]"/>
+                <munit:variable key="processedFiles" value="#[[]]"/>
+                <munit:variable key="failedFiles" value="#[[]]"/>
+            </munit:variables>
+        </munit:set-event>
+    </munit:before-test>
+
+    <!-- ============================================================================ -->
+    <!-- Test: Scheduler Trigger Execution                                            -->
+    <!-- ============================================================================ -->
+    
+    <munit:test name="test-scheduler-trigger-execution" description="Verify scheduler flow initializes correctly">
+        <munit:behavior>
+            <!-- Mock Object Store operations -->
+            <munit-tools:mock-when processor="os:store">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute attributeName="doc:name" whereValue="Acquire Lock"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+            
+            <munit-tools:mock-when processor="os:remove">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute attributeName="doc:name" whereValue="Release Lock"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+            
+            <!-- Mock all polling subflows -->
+            <munit-tools:mock-when processor="flow-ref">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute attributeName="name" whereValue="sftp-polling-subflow"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+            
+            <munit-tools:mock-when processor="flow-ref">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute attributeName="name" whereValue="ftp-polling-subflow"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+            
+            <munit-tools:mock-when processor="flow-ref">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute attributeName="name" whereValue="s3-polling-subflow"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+            
+            <munit-tools:mock-when processor="flow-ref">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute attributeName="name" whereValue="azure-blob-polling-subflow"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        
+        <munit:execution>
+            <flow-ref name="scheduler-file-polling-main-flow"/>
+        </munit:execution>
+        
+        <munit:validation>
+            <munit-tools:assert-that expression="#[vars.correlationId]" is="#[MunitTools::notNullValue()]" message="Correlation ID should be set"/>
+            <munit-tools:assert-that expression="#[vars.jobStartTime]" is="#[MunitTools::notNullValue()]" message="Job start time should be set"/>
+        </munit:validation>
+    </munit:test>
+
+    <!-- ============================================================================ -->
+    <!-- Test: Distributed Lock Acquisition                                           -->
+    <!-- ============================================================================ -->
+    
+    <munit:test name="test-distributed-lock-acquisition" description="Verify distributed lock is acquired before processing">
+        <munit:behavior>
+            <!-- Mock successful lock acquisition -->
+            <munit-tools:mock-when processor="os:store">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute attributeName="doc:name" whereValue="Acquire Lock"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+            
+            <munit-tools:mock-when processor="os:remove">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute attributeName="doc:name" whereValue="Release Lock"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+            
+            <!-- Mock all polling subflows -->
+            <munit-tools:mock-when processor="flow-ref">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute attributeName="name" whereValue="sftp-polling-subflow"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+            
+            <munit-tools:mock-when processor="flow-ref">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute attributeName="name" whereValue="ftp-polling-subflow"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+            
+            <munit-tools:mock-when processor="flow-ref">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute attributeName="name" whereValue="s3-polling-subflow"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+            
+            <munit-tools:mock-when processor="flow-ref">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute attributeName="name" whereValue="azure-blob-polling-subflow"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        
+        <munit:execution>
+            <flow-ref name="scheduler-file-polling-main-flow"/>
+        </munit:execution>
+        
+        <munit:validation>
+            <munit-tools:verify-call processor="os:store" times="1">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute attributeName="doc:name" whereValue="Acquire Lock"/>
+                </munit-tools:with-attributes>
+            </munit-tools:verify-call>
+            <munit-tools:verify-call processor="os:remove" times="1">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute attributeName="doc:name" whereValue="Release Lock"/>
+                </munit-tools:with-attributes>
+            </munit-tools:verify-call>
+        </munit:validation>
+    </munit:test>
+
+    <!-- ============================================================================ -->
+    <!-- Test: Lock Already Exists - Skip Processing                                  -->
+    <!-- ============================================================================ -->
+    
+    <munit:test name="test-lock-already-exists-skip-processing" description="Verify processing is skipped when lock already exists">
+        <munit:behavior>
+            <!-- Mock lock acquisition failure -->
+            <munit-tools:mock-when processor="os:store">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute attributeName="doc:name" whereValue="Acquire Lock"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:error typeId="OS:KEY_ALREADY_EXISTS"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        
+        <munit:execution>
+            <flow-ref name="scheduler-file-polling-main-flow"/>
+        </munit:execution>
+        
+        <munit:validation>
+            <!-- Verify polling subflows were NOT called -->
+            <munit-tools:verify-call processor="flow-ref" times="0">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute attributeName="name" whereValue="sftp-polling-subflow"/>
+                </munit-tools:with-attributes>
+            </munit-tools:verify-call>
+        </munit:validation>
+    </munit:test>
+
+</mule>

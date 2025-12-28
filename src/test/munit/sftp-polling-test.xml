@@ -1,0 +1,176 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+      xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:sftp="http://www.mulesoft.org/schema/mule/sftp"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+        http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+        http://www.mulesoft.org/schema/mule/sftp http://www.mulesoft.org/schema/mule/sftp/current/mule-sftp.xsd">
+
+    <munit:config name="sftp-polling-test-suite.xml"/>
+
+    <!-- ============================================================================ -->
+    <!-- Before Test - Setup SFTP Test Context                                        -->
+    <!-- ============================================================================ -->
+    
+    <munit:before-test name="sftp-test-before-each">
+        <munit:set-event doc:name="Initialize SFTP Test Event">
+            <munit:payload value="#[{}]" mediaType="application/java"/>
+            <munit:variables>
+                <munit:variable key="correlationId" value="#[uuid()]"/>
+                <munit:variable key="fileSource" value="SFTP"/>
+                <munit:variable key="processedFiles" value="#[[]]"/>
+                <munit:variable key="failedFiles" value="#[[]]"/>
+            </munit:variables>
+        </munit:set-event>
+    </munit:before-test>
+
+    <!-- ============================================================================ -->
+    <!-- Test: SFTP List Files Success                                                -->
+    <!-- ============================================================================ -->
+    
+    <munit:test name="test-sftp-list-files-success" description="Verify SFTP polling lists files correctly">
+        <munit:behavior>
+            <!-- Mock SFTP list operation -->
+            <munit-tools:mock-when processor="sftp:list">
+                <munit-tools:then-return>
+                    <munit-tools:payload value="#[[
+                        {
+                            attributes: {
+                                fileName: 'test-data.csv',
+                                path: '/inbound/test-data.csv',
+                                size: 1024,
+                                directory: false
+                            }
+                        },
+                        {
+                            attributes: {
+                                fileName: 'test-data.json',
+                                path: '/inbound/test-data.json',
+                                size: 2048,
+                                directory: false
+                            }
+                        }
+                    ]]" mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            
+            <!-- Mock SFTP read operation -->
+            <munit-tools:mock-when processor="sftp:read">
+                <munit-tools:then-return>
+                    <munit-tools:payload value='#["name,email\nJohn,john@test.com"]' mediaType="text/plain"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            
+            <!-- Mock process file orchestration -->
+            <munit-tools:mock-when processor="flow-ref">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute attributeName="name" whereValue="process-file-orchestration-subflow"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        
+        <munit:execution>
+            <flow-ref name="sftp-polling-subflow"/>
+        </munit:execution>
+        
+        <munit:validation>
+            <munit-tools:verify-call processor="sftp:list" times="1"/>
+            <munit-tools:assert-that expression="#[vars.fileSource]" is="#[MunitTools::equalTo('SFTP')]" message="File source should be SFTP"/>
+        </munit:validation>
+    </munit:test>
+
+    <!-- ============================================================================ -->
+    <!-- Test: SFTP Directory Not Found                                               -->
+    <!-- ============================================================================ -->
+    
+    <munit:test name="test-sftp-directory-not-found" description="Verify SFTP handles missing directory gracefully">
+        <munit:behavior>
+            <!-- Mock SFTP list operation with error -->
+            <munit-tools:mock-when processor="sftp:list">
+                <munit-tools:then-return>
+                    <munit-tools:error typeId="SFTP:ILLEGAL_PATH"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        
+        <munit:execution>
+            <flow-ref name="sftp-polling-subflow"/>
+        </munit:execution>
+        
+        <munit:validation>
+            <!-- Should complete without error due to on-error-continue -->
+            <munit-tools:verify-call processor="sftp:list" times="1"/>
+        </munit:validation>
+    </munit:test>
+
+    <!-- ============================================================================ -->
+    <!-- Test: SFTP Archive File Success                                              -->
+    <!-- ============================================================================ -->
+    
+    <munit:test name="test-sftp-archive-file-success" description="Verify SFTP archive moves file correctly">
+        <munit:behavior>
+            <munit:set-event doc:name="Set Archive Test Variables">
+                <munit:payload value="#[{}]" mediaType="application/java"/>
+                <munit:variables>
+                    <munit:variable key="correlationId" value="#[uuid()]"/>
+                    <munit:variable key="fileSource" value="SFTP"/>
+                    <munit:variable key="fileName" value="test-file.csv"/>
+                    <munit:variable key="filePath" value="/inbound/test-file.csv"/>
+                </munit:variables>
+            </munit:set-event>
+            
+            <!-- Mock SFTP move operation -->
+            <munit-tools:mock-when processor="sftp:move">
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        
+        <munit:execution>
+            <flow-ref name="sftp-archive-file-subflow"/>
+        </munit:execution>
+        
+        <munit:validation>
+            <munit-tools:verify-call processor="sftp:move" times="1"/>
+        </munit:validation>
+    </munit:test>
+
+    <!-- ============================================================================ -->
+    <!-- Test: SFTP Move to Error Directory                                           -->
+    <!-- ============================================================================ -->
+    
+    <munit:test name="test-sftp-move-to-error" description="Verify SFTP moves failed files to error directory">
+        <munit:behavior>
+            <munit:set-event doc:name="Set Error Test Variables">
+                <munit:payload value="#[{}]" mediaType="application/java"/>
+                <munit:variables>
+                    <munit:variable key="correlationId" value="#[uuid()]"/>
+                    <munit:variable key="fileSource" value="SFTP"/>
+                    <munit:variable key="fileName" value="error-file.csv"/>
+                    <munit:variable key="filePath" value="/inbound/error-file.csv"/>
+                    <munit:variable key="errorCategory" value="VALIDATION"/>
+                </munit:variables>
+            </munit:set-event>
+            
+            <!-- Mock SFTP move operation -->
+            <munit-tools:mock-when processor="sftp:move">
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        
+        <munit:execution>
+            <flow-ref name="sftp-move-to-error-subflow"/>
+        </munit:execution>
+        
+        <munit:validation>
+            <munit-tools:verify-call processor="sftp:move" times="1"/>
+        </munit:validation>
+    </munit:test>
+
+</mule>

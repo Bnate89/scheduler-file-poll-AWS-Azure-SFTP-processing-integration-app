@@ -1,0 +1,193 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:secure-properties="http://www.mulesoft.org/schema/mule/secure-properties"
+      xmlns:sftp="http://www.mulesoft.org/schema/mule/sftp"
+      xmlns:ftp="http://www.mulesoft.org/schema/mule/ftp"
+      xmlns:s3="http://www.mulesoft.org/schema/mule/s3"
+      xmlns:azure-storage="http://www.mulesoft.org/schema/mule/azure-storage"
+      xmlns:os="http://www.mulesoft.org/schema/mule/os"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/secure-properties http://www.mulesoft.org/schema/mule/secure-properties/current/mule-secure-properties.xsd
+        http://www.mulesoft.org/schema/mule/sftp http://www.mulesoft.org/schema/mule/sftp/current/mule-sftp.xsd
+        http://www.mulesoft.org/schema/mule/ftp http://www.mulesoft.org/schema/mule/ftp/current/mule-ftp.xsd
+        http://www.mulesoft.org/schema/mule/s3 http://www.mulesoft.org/schema/mule/s3/current/mule-s3.xsd
+        http://www.mulesoft.org/schema/mule/azure-storage http://www.mulesoft.org/schema/mule/azure-storage/current/mule-azure-storage.xsd
+        http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <!-- ============================================================================ -->
+    <!-- Global Properties Configuration                                              -->
+    <!-- ============================================================================ -->
+    
+    <!-- Bootstrap Property for Environment -->
+    <global-property name="mule.env" value="dev" doc:name="Environment Property"/>
+    
+    <!-- Secure Properties Configuration -->
+    <secure-properties:config name="Secure_Properties_Config" 
+        doc:name="Secure Properties Config"
+        file="application-secure.yaml" 
+        key="${secure.key}">
+        <secure-properties:encrypt algorithm="AES" mode="CBC"/>
+    </secure-properties:config>
+    
+    <!-- Application Properties Configuration -->
+    <configuration-properties doc:name="Application Properties" file="application.yaml"/>
+
+    <!-- ============================================================================ -->
+    <!-- Object Store Configurations                                                  -->
+    <!-- ============================================================================ -->
+    
+    <!-- Object Store for Processed File Tracking (Idempotency) -->
+    <os:object-store name="Processed_Files_Object_Store"
+        doc:name="Processed Files Object Store"
+        persistent="true"
+        maxEntries="${objectstore.processedFiles.maxEntries}"
+        entryTtl="${objectstore.processedFiles.entryTtlHours}"
+        entryTtlUnit="HOURS"
+        expirationInterval="1"
+        expirationIntervalUnit="HOURS"/>
+    
+    <!-- Object Store for Distributed Locking -->
+    <os:object-store name="Distributed_Lock_Object_Store"
+        doc:name="Distributed Lock Object Store"
+        persistent="true"
+        maxEntries="${objectstore.distributedLock.maxEntries}"
+        entryTtl="${objectstore.distributedLock.entryTtlMinutes}"
+        entryTtlUnit="MINUTES"
+        expirationInterval="5"
+        expirationIntervalUnit="MINUTES"/>
+
+    <!-- ============================================================================ -->
+    <!-- SFTP Connector Configuration                                                 -->
+    <!-- ============================================================================ -->
+    
+    <sftp:config name="SFTP_Config" doc:name="SFTP Config">
+        <sftp:connection 
+            host="${sftp.host}" 
+            port="${sftp.port}" 
+            username="${secure::sftp.username}" 
+            password="${secure::sftp.password}" 
+            workingDir="${sftp.workingDir}"
+            connectionTimeout="${sftp.connectionTimeout}"
+            connectionTimeoutUnit="SECONDS"
+            responseTimeout="${sftp.responseTimeout}"
+            responseTimeoutUnit="SECONDS">
+            <reconnection failsDeployment="false">
+                <reconnect frequency="${sftp.reconnect.frequency}" count="${sftp.reconnect.count}"/>
+            </reconnection>
+        </sftp:connection>
+    </sftp:config>
+
+    <!-- ============================================================================ -->
+    <!-- FTP Connector Configuration                                                  -->
+    <!-- ============================================================================ -->
+    
+    <ftp:config name="FTP_Config" doc:name="FTP Config">
+        <ftp:connection 
+            host="${ftp.host}" 
+            port="${ftp.port}" 
+            username="${secure::ftp.username}" 
+            password="${secure::ftp.password}" 
+            workingDir="${ftp.workingDir}"
+            connectionTimeout="${ftp.connectionTimeout}"
+            connectionTimeoutUnit="SECONDS"
+            responseTimeout="${ftp.responseTimeout}"
+            responseTimeoutUnit="SECONDS">
+            <reconnection failsDeployment="false">
+                <reconnect frequency="${ftp.reconnect.frequency}" count="${ftp.reconnect.count}"/>
+            </reconnection>
+        </ftp:connection>
+    </ftp:config>
+
+    <!-- ============================================================================ -->
+    <!-- AWS S3 Connector Configuration                                               -->
+    <!-- ============================================================================ -->
+    
+    <s3:config name="Amazon_S3_Config" doc:name="Amazon S3 Config">
+        <s3:connection 
+            accessKey="${secure::aws.accessKey}" 
+            secretKey="${secure::aws.secretKey}" 
+            regionEndpoint="${s3.region}">
+            <reconnection failsDeployment="false">
+                <reconnect frequency="${s3.reconnect.frequency}" count="${s3.reconnect.count}"/>
+            </reconnection>
+        </s3:connection>
+    </s3:config>
+
+    <!-- ============================================================================ -->
+    <!-- Azure Blob Storage Connector Configuration                                   -->
+    <!-- ============================================================================ -->
+    
+    <azure-storage:config name="Azure_Storage_Config" doc:name="Azure Storage Config">
+        <azure-storage:access-key-azure-connection 
+            accountName="${secure::azure.storage.accountName}" 
+            accountKey="${secure::azure.storage.accountKey}">
+            <reconnection failsDeployment="false">
+                <reconnect frequency="${azure.reconnect.frequency}" count="${azure.reconnect.count}"/>
+            </reconnection>
+        </azure-storage:access-key-azure-connection>
+    </azure-storage:config>
+
+    <!-- ============================================================================ -->
+    <!-- Global Error Handler Reference                                               -->
+    <!-- ============================================================================ -->
+    
+    <error-handler name="Global_Error_Handler" doc:name="Global Error Handler">
+        <!-- Connectivity Errors - Retry applicable -->
+        <on-error-propagate type="SFTP:CONNECTIVITY, FTP:CONNECTIVITY, S3:CONNECTIVITY, AZURE-STORAGE:CONNECTIVITY" 
+            enableNotifications="true" logException="true">
+            <logger level="ERROR" doc:name="Log Connectivity Error"
+                message='#["[CONNECTIVITY_ERROR] CorrelationId: " ++ (vars.correlationId default correlationId) ++ " | Source: " ++ (vars.fileSource default "UNKNOWN") ++ " | Error: " ++ error.description]'/>
+            <set-variable variableName="errorCategory" value="CONNECTIVITY" doc:name="Set Error Category"/>
+        </on-error-propagate>
+        
+        <!-- Authentication Errors -->
+        <on-error-propagate type="SFTP:ACCESS_DENIED, FTP:ACCESS_DENIED, S3:ACCESS_DENIED" 
+            enableNotifications="true" logException="true">
+            <logger level="ERROR" doc:name="Log Auth Error"
+                message='#["[AUTH_ERROR] CorrelationId: " ++ (vars.correlationId default correlationId) ++ " | Source: " ++ (vars.fileSource default "UNKNOWN") ++ " | Error: " ++ error.description]'/>
+            <set-variable variableName="errorCategory" value="AUTHENTICATION" doc:name="Set Error Category"/>
+        </on-error-propagate>
+        
+        <!-- File Not Found Errors -->
+        <on-error-continue type="SFTP:ILLEGAL_PATH, FTP:ILLEGAL_PATH, S3:NO_SUCH_KEY, S3:NO_SUCH_BUCKET" 
+            enableNotifications="true" logException="true">
+            <logger level="WARN" doc:name="Log File Not Found"
+                message='#["[FILE_NOT_FOUND] CorrelationId: " ++ (vars.correlationId default correlationId) ++ " | Source: " ++ (vars.fileSource default "UNKNOWN") ++ " | Error: " ++ error.description]'/>
+            <set-variable variableName="errorCategory" value="FILE_NOT_FOUND" doc:name="Set Error Category"/>
+        </on-error-continue>
+        
+        <!-- Duplicate Message (Idempotency) -->
+        <on-error-continue type="MULE:DUPLICATE_MESSAGE" enableNotifications="false" logException="false">
+            <logger level="INFO" doc:name="Log Duplicate"
+                message='#["[DUPLICATE_FILE] CorrelationId: " ++ (vars.correlationId default correlationId) ++ " | File already processed, skipping."]'/>
+            <set-variable variableName="errorCategory" value="DUPLICATE" doc:name="Set Error Category"/>
+        </on-error-continue>
+        
+        <!-- Transformation Errors -->
+        <on-error-propagate type="EXPRESSION, TRANSFORMATION" enableNotifications="true" logException="true">
+            <logger level="ERROR" doc:name="Log Transform Error"
+                message='#["[TRANSFORM_ERROR] CorrelationId: " ++ (vars.correlationId default correlationId) ++ " | FileName: " ++ (vars.fileName default "UNKNOWN") ++ " | Error: " ++ error.description]'/>
+            <set-variable variableName="errorCategory" value="TRANSFORMATION" doc:name="Set Error Category"/>
+        </on-error-propagate>
+        
+        <!-- Validation Errors -->
+        <on-error-propagate type="APP:VALIDATION_ERROR" enableNotifications="true" logException="true">
+            <logger level="ERROR" doc:name="Log Validation Error"
+                message='#["[VALIDATION_ERROR] CorrelationId: " ++ (vars.correlationId default correlationId) ++ " | FileName: " ++ (vars.fileName default "UNKNOWN") ++ " | Error: " ++ error.description]'/>
+            <set-variable variableName="errorCategory" value="VALIDATION" doc:name="Set Error Category"/>
+        </on-error-propagate>
+        
+        <!-- Catch-All for Unknown Errors -->
+        <on-error-propagate type="ANY" enableNotifications="true" logException="true">
+            <logger level="ERROR" doc:name="Log Unknown Error"
+                message='#["[UNKNOWN_ERROR] CorrelationId: " ++ (vars.correlationId default correlationId) ++ " | Type: " ++ error.errorType.identifier ++ " | Error: " ++ error.description]'/>
+            <set-variable variableName="errorCategory" value="UNKNOWN" doc:name="Set Error Category"/>
+        </on-error-propagate>
+    </error-handler>
+
+</mule>
